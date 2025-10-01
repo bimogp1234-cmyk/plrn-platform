@@ -1,0 +1,186 @@
+@import url("https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700;900&display=swap");
+
+@keyframes floatCard {
+  0% {
+    transform: translateY(0);
+  }
+  100% {
+    transform: translateY(-10px);
+  }
+}
+
+@keyframes bounceButton {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-5px);
+  }
+}
+
+/* Layout */
+.container {
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 0 1.5rem;
+  margin-top: -2.5rem;
+}
+
+.section {
+  width: 100%;
+  min-height: 100vh;
+  padding: 4rem 1.5rem;
+  background-color: #f9fafb;
+  font-family: "Tajawal", sans-serif;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Visibility transitions */
+.sectionVisible {
+  opacity: 1;
+  transform: translateY(0);
+  transition: all 0.7s ease;
+}
+
+.sectionHidden {
+  opacity: 0;
+  transform: translateY(3rem);
+  transition: all 0.7s ease;
+}
+
+/* Header */
+.header {
+  text-align: center;
+  margin-bottom: 3rem;
+  position: relative;
+  z-index: 10;
+}
+
+.title {
+  font-size: 2rem;
+  font-weight: 900;
+  color: #000;
+  margin-bottom: 1rem;
+}
+
+@media (min-width: 768px) {
+  .title {
+    font-size: 2.5rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .title {
+    font-size: 3rem;
+  }
+}
+
+.bounceText {
+  color: #22c55e;
+  animation: bounceButton 1.5s infinite;
+}
+
+.subtitle {
+  font-size: 1.125rem;
+  color: #374151;
+  max-width: 32rem;
+  margin: 0 auto;
+}
+
+@media (min-width: 768px) {
+  .subtitle {
+    font-size: 1.25rem;
+  }
+}
+
+/* Card grid */
+.cardGrid {
+  display: grid;
+  gap: 2rem;
+  position: relative;
+  z-index: 10;
+}
+
+@media (min-width: 768px) {
+  .cardGrid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (min-width: 1024px) {
+  .cardGrid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+/* Card */
+.card {
+  padding: 1.5rem;
+  border-radius: 1.5rem;
+  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.1);
+  transition: transform 0.7s ease;
+  background-size: cover;
+  background-position: center;
+}
+
+.card:hover {
+  transform: scale(1.1) rotate(2deg);
+  box-shadow: 0 15px 25px rgba(0, 0, 0, 0.2);
+}
+
+.cardIcon {
+  width: 4rem;
+  height: 4rem;
+  margin: 0 auto 1rem;
+}
+
+.cardTitle {
+  font-size: 1.5rem;
+  font-weight: bold;
+  margin-bottom: 0.75rem;
+  text-align: center;
+}
+
+.cardDescription {
+  color: #4b5563;
+  text-align: center;
+  margin-bottom: 1.5rem;
+}
+
+/* Button */
+.bounceButton {
+  display: inline-block;
+  padding: 0.75rem 1.5rem;
+  background-color: #22c55e;
+  color: white;
+  font-weight: bold;
+  border-radius: 9999px;
+  box-shadow: 0 5px 10px rgba(0, 0, 0, 0.1);
+  animation: bounceButton 1.5s infinite;
+  transition: transform 0.3s ease, background-color 0.3s ease;
+}
+
+.bounceButton:hover {
+  background-color: #16a34a;
+  transform: scale(1.25) rotate(3deg);
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
+}
+
+/* Gradients */
+.gradientYellow {
+  background-image: linear-gradient(to bottom right, #fef08a, #fdba74, #f87171);
+}
+
+.gradientGreen {
+  background-image: linear-gradient(to bottom right, #bbf7d0, #86efac, #4ade80);
+}
+
+.gradientBlue {
+  background-image: linear-gradient(to bottom right, #bfdbfe, #c7d2fe, #ddd6fe);
+}
+
+.gradientPink {
+  background-image: linear-gradient(to bottom right, #fbcfe8, #f9a8d4, #f87171);
+}

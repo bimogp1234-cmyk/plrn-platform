@@ -1,0 +1,35 @@
+{
+  "name": "saba-alnil-site",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "start": "vite"
+  },
+  "dependencies": {
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.1",
+    "@fontsource/aref-ruqaa-ink": "^5.2.9",
+    "@fontsource/cairo-play": "^5.2.9",
+    "@fontsource/tajawal": "^5.2.7",
+    "@lottiefiles/dotlottie-react": "^0.17.1",
+    "@mui/icons-material": "^7.3.2",
+    "@mui/material": "^7.3.2",
+    "firebase": "^12.3.0",
+    "framer-motion": "^12.23.16",
+    "lucide-react": "^0.544.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^7.9.3",
+    "react-toastify": "^11.0.5"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react-swc": "^4.1.0",
+    "autoprefixer": "^10.4.21",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.17",
+    "vite": "^5.2.0"
+  }
+}

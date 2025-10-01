@@ -1,0 +1,27 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom styles */
+:root {
+  --gold: #c9a34b;
+}
+
+body {
+  font-family: "Cairo", "Inter", system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial;
+  background-color: white;
+  color: #0b0b0b;
+}
+
+/* Fine-tune headings for Arabic + Latin */
+h1,
+h2,
+h3 {
+  font-family: "Cairo", "Inter", sans-serif;
+}
+
+/* Luxury thin border */
+.lux-border {
+  border-color: rgba(0, 0, 0, 0.06);
+}
