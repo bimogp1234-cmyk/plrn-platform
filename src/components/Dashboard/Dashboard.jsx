@@ -500,6 +500,7 @@ export default function Dashboard() {
   const handleLogout = async () => {
     try {
       await signOut(fb.auth);
+      window.location.href = "/login";
       showToast("تم تسجيل الخروج بنجاح!", "success");
     } catch (err) {
       console.error("logout error:", err);

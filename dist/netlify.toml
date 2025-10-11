@@ -1,8 +1,13 @@
 [build]
-  command = "npm run build"
-  publish = "dist" # use "build" if you're using Create React App
+  publish = "dist"
+  command = "npm install && npm run build"
 
-[[redirects]]
-  from = "/*"
-  to = "/index.html"
-  status = 200
+[redirects]
+  [[redirects]]
+    from = "/*"
+    to = "/index.html"
+    status = 200
+
+[context.production.environment]
+  NODE_VERSION = "18"
+  NPM_VERSION = "9"
