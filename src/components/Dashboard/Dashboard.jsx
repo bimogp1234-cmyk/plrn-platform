@@ -29,6 +29,7 @@ import {
   Computer,
   LocalHospital,
 } from "@mui/icons-material";
+import { useNavigate } from "react-router-dom";
 
 import { Save, Edit, PhotoCamera } from "@mui/icons-material";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
@@ -273,12 +274,35 @@ function ProfileEditModal({
 // -------------------------------
 export default function Dashboard() {
   // ----------------- UI / theme / basic states -----------------
-  const [darkMode, setDarkMode] = useState(true);
+  const [darkMode, setDarkMode] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [toasts, setToasts] = useState([]);
   const [showWelcome, setShowWelcome] = useState(true);
   const [loading, setLoading] = useState(true);
+  const navigate = useNavigate();
+  const handleOpen = (path) => {
+    if (!path) {
+      showToast("المسار غير متاح حالياً.", "info");
+      return;
+    }
+
+    if (!userId || !userData) {
+      showToast("يجب تسجيل الدخول أولاً.", "warning");
+      return;
+    }
+
+    setIsSidebarOpen(false);
+
+    // Navigate and send user data via router state
+    navigate(`/${path}`, {
+      state: {
+        userId,
+        userData,
+        darkMode,
+      },
+    });
+  };
 
   // ----------------- Firebase & user state -----------------
   // fb holds db & auth wrappers so we can pass them to modal
@@ -290,7 +314,6 @@ export default function Dashboard() {
   // ----------------- Content (mocked Firestore style) -----------------
   // We'll load mock data here — structured like a Firestore response so swapping to
   // real Firestore reads will be trivial.
-  const [games, setGames] = useState([]);
   const [programs, setPrograms] = useState([]);
 
   const sectionRef = useRef(null);
@@ -305,7 +328,29 @@ export default function Dashboard() {
 
   // ----------------- Greeting -----------------
   const getGreeting = () => {
-    const hour = new Date().getHours();
+    // Detect user's local timezone
+    const userTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+    // Define Sudan’s timezone and offset (UTC+2)
+    const sudanOffset = 2;
+
+    let hour;
+
+    try {
+      if (userTimeZone === "Africa/Khartoum") {
+        // User is in Sudan — just use local time
+        hour = new Date().getHours();
+      } else {
+        // Convert UTC time to Sudan local time
+        const now = new Date();
+        hour = (now.getUTCHours() + sudanOffset) % 24;
+      }
+    } catch (error) {
+      // Fallback in case timezone detection fails
+      hour = (new Date().getUTCHours() + sudanOffset) % 24;
+    }
+
+    // Determine greeting based on Sudan’s local time
     if (hour < 12) return "صباح الخير";
     if (hour < 18) return "مساء الخير";
     return "مساء النور";
@@ -394,70 +439,37 @@ export default function Dashboard() {
         {
           id: "computer",
           name: "الحاسوب",
+          path: "maincomdep",
+
           description: "مسار الحاسوب التفاعلي",
           icon: <Computer />,
         },
         {
           id: "firstaid",
+          path: "firstaid",
+
           name: "الإسعافات الأولية",
           description: "أساسيات الإسعاف الأولي",
           icon: <LocalHospital />,
         },
         {
           id: "math",
+          path: "mathdep",
+
           name: "الرياضيات",
           description: "تطوير المهارات الحسابية",
           icon: <Calculate />,
         },
         {
           id: "physics",
-          name: "الالفيزياء",
+          path: "physicdep",
+          name: "الفيزياء",
           description: "مقدمات في الفيزياء",
           icon: <Science />,
         },
       ];
 
-      const mockGames = [
-        {
-          id: "g1",
-          title: "لعبة الحروف",
-          icon: "🔤",
-          description: "تعلم الحروف العربية بطريقة ممتعة وتفاعلية.",
-        },
-        {
-          id: "g2",
-          title: "لعبة الألوان",
-          icon: "🎨",
-          description: "استكشاف الألوان من خلال التحديات البصرية.",
-        },
-        {
-          id: "g3",
-          title: "لعبة الأشكال",
-          icon: "🟠",
-          description: "تمييز الأشكال الهندسية وتطوير المهارات البصرية.",
-        },
-        {
-          id: "g4",
-          title: "لعبة الأرقام",
-          icon: "🔢",
-          description: "تعلم الأرقام العربية من خلال اللعب.",
-        },
-        {
-          id: "g5",
-          title: "لعبة الحيوانات",
-          icon: "🐘",
-          description: "تعرف على الحيوانات وأصواتها بطريقة ممتعة.",
-        },
-        {
-          id: "g6",
-          title: "لعبة الفواكه",
-          icon: "🍎",
-          description: "تمييز الفواكه وتعلم أسمائها.",
-        },
-      ];
-
       setPrograms(mockPrograms);
-      setGames(mockGames);
     };
 
     loadMockContent();
@@ -497,10 +509,6 @@ export default function Dashboard() {
 
   // ----------------- UI helpers -----------------
   const toggleTheme = () => setDarkMode((p) => !p);
-  const scrollToGames = () => {
-    const el = document.getElementById("games");
-    if (el) el.scrollIntoView({ behavior: "smooth" });
-  };
 
   // ----------------- Custom styles (keep same as original) -----------------
   const customStyles = `
@@ -617,36 +625,16 @@ export default function Dashboard() {
           {programs.map((p) => (
             <a
               key={p.id}
-              href={`#${p.id}`}
-              onClick={() => setIsSidebarOpen(false)}
+              onClick={() => {
+                handleOpen(p.path, auth.currentUser?.uid);
+                setIsSidebarOpen(false);
+              }}
               className="flex items-center gap-4 text-lg font-medium py-3 px-2 rounded-xl transition-all duration-200 hover:bg-blue-600/30 hover:text-blue-300 hover:shadow-md"
             >
               <span className="text-blue-400">{p.icon}</span>
               {p.name}
             </a>
           ))}
-
-          <h4 className="pt-4 text-sm font-bold uppercase tracking-wider text-yellow-400 opacity-80 border-t border-gray-700/50">
-            الألعاب التعليمية
-          </h4>
-          {games.slice(0, 3).map((game, idx) => (
-            <a
-              key={game.id}
-              href="#games"
-              onClick={() => setIsSidebarOpen(false)}
-              className="flex items-center gap-4 text-lg font-medium py-3 px-2 rounded-xl transition-all duration-200 hover:bg-yellow-600/30 opacity-90 hover:opacity-100"
-            >
-              <span className="text-xl leading-none">{game.icon}</span>
-              {game.title}
-            </a>
-          ))}
-          <a
-            href="#games"
-            onClick={() => setIsSidebarOpen(false)}
-            className="block text-center text-sm font-bold pt-2 text-yellow-500 hover:underline"
-          >
-            عرض كل الألعاب...
-          </a>
         </nav>
 
         <div className="mt-6 pt-4 border-t border-gray-700/50 flex justify-around flex-shrink-0">
@@ -732,7 +720,7 @@ export default function Dashboard() {
             </Toolbar>
           </AppBar>
 
-          <Fade in={showWelcome} timeout={1000}>
+          <Fade in={showWelcome} timeout={2000}>
             <div className="w-full py-3 text-center text-xl font-black text-white bg-gradient-to-r from-red-500 via-yellow-500 to-purple-500 shadow-2xl">
               {getGreeting()} 👋 {userData?.fullName || "مستخدم"}!
             </div>
@@ -754,12 +742,6 @@ export default function Dashboard() {
                 منصة **بلــــــيرن** هي بوابتك نحو تجربة تعليمية ممتعة، حيث
                 يتحول كل درس إلى لعبة مثيرة تطلق العنان لإبداعك.
               </p>
-              <button
-                onClick={scrollToGames}
-                className="mt-4 py-4 px-12 text-xl rounded-full font-extrabold text-white bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 transition-all duration-300 shadow-xl hover:shadow-2xl active:scale-[0.98] border-b-4 border-green-700"
-              >
-                ابداً اللعب الآن 🚀
-              </button>
             </section>
 
             <section
@@ -769,7 +751,8 @@ export default function Dashboard() {
               <h2 className="text-4xl font-black mb-10 text-purple-400 text-center">
                 برامجنا التعليمية المبتكرة 💡
               </h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+              {/* التعديل هنا: lg:grid-cols-4 تم تغييره إلى lg:grid-cols-2 */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
                 {programs.map((p) => (
                   <Paper
                     key={p.id}
@@ -789,37 +772,15 @@ export default function Dashboard() {
                         {p.name}
                       </h3>
                       <p className="mt-2 text-sm opacity-80">{p.description}</p>
+                      <button
+                        onClick={() =>
+                          handleOpen(p.path, auth.currentUser?.uid)
+                        }
+                        className="mt-2 py-2 px-6 text-xl rounded-full font-extrabold text-white bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 transition-all duration-300 shadow-xl hover:shadow-2xl active:scale-[0.98] border-b-4 border-green-700"
+                      >
+                        ابداً اللعب الآن
+                      </button>
                     </div>
-                  </Paper>
-                ))}
-              </div>
-            </section>
-
-            <section id="games" className="py-12 max-w-7xl mx-auto w-full">
-              <h2 className="text-4xl font-black mb-10 text-yellow-400 text-center">
-                ألعابنا التعليمية المميزة 🕹️
-              </h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                {games.map((game) => (
-                  <Paper
-                    key={game.id}
-                    elevation={10}
-                    className={`rounded-2xl p-6 transition-all duration-300 hover:scale-[1.03] cursor-pointer shadow-2xl hover:shadow-yellow-500/30 border-t-4 ${
-                      darkMode
-                        ? "bg-gray-800 text-white border-yellow-500"
-                        : "bg-white text-gray-800 border-yellow-400"
-                    }`}
-                  >
-                    <div className="text-5xl mb-4 text-center">{game.icon}</div>
-                    <h3 className="text-xl font-extrabold text-yellow-400 mb-2 text-center">
-                      {game.title}
-                    </h3>
-                    <p className="text-sm text-center opacity-80 h-10">
-                      {game.description}
-                    </p>
-                    <button className="mt-6 w-full py-3 rounded-xl font-bold text-gray-900 bg-yellow-400 hover:bg-yellow-300 transition-colors shadow-lg hover:shadow-xl active:scale-[0.98]">
-                      ابدأ اللعب
-                    </button>
                   </Paper>
                 ))}
               </div>

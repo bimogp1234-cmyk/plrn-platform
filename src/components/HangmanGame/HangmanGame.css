@@ -1,0 +1,81 @@
+body, html, .hangman-root {
+  margin: 0;
+  padding: 0;
+  font-family: 'Tajawal', sans-serif;
+  background-color: #1f2937;
+  color: #fff;
+}
+
+.hangman-root.light { background-color: #f0fdf4; color: #111827; }
+
+.hangman-appbar { background-color: #111827; }
+.hangman-root.light .hangman-appbar { background-color: #fff; color: #111827; }
+
+.hangman-toolbar { display: flex; justify-content: space-between; align-items: center; }
+.hangman-logo { width: 36px; height: 36px; object-fit: contain; margin-right: 8px; }
+.hangman-title { font-weight: bold; font-size: 1.2rem; }
+
+.hangman-main { display: flex; justify-content: center; padding: 20px; }
+.hangman-card { background-color: #111827; padding: 24px; border-radius: 16px; width: 800px; max-width: 95%; }
+.hangman-root.light .hangman-card { background-color: #f0fdf4; }
+
+.hangman-hint { font-size: 1.1rem; margin-bottom: 16px; }
+
+.hangman-stage { position: relative; width: 200px; height: 300px; margin: 20px auto; }
+.the-draw, .the-stand, .the-beam, .the-rope, .man div { position: absolute; }
+
+.the-draw { bottom: 0; width: 200px; height: 4px; background-color: #fff; }
+.the-stand { bottom: 4px; left: 50px; width: 4px; height: 200px; background-color: #fff; }
+.the-beam { top: 0; left: 50px; width: 100px; height: 4px; background-color: #fff; }
+.the-rope { top: 4px; left: 146px; width: 4px; height: 40px; background-color: #fff; }
+
+/* الرجل مخفي من البداية */
+.man .head,
+.man .body,
+.man .arm,
+.man .leg {
+  opacity: 0;
+  transform: translateY(-20px);
+  transition: all 0.5s ease;
+}
+
+/* ظهور أجزاء الرجل */
+.man .head.show { opacity: 1; transform: translateY(0); border-radius: 50%; border: 4px solid #fff; width: 40px; height: 40px; top: 44px; left: 130px; background: transparent; }
+.man .body.show { opacity: 1; transform: translateY(0); top: 84px; left: 148px; width: 4px; height: 80px; background-color: #fff; }
+.man .arm.left.show { opacity: 1; transform: rotate(-45deg) translateY(0); transform-origin: left; top: 90px; left: 148px; width: 40px; height: 4px; background-color: #fff; }
+.man .arm.right.show { opacity: 1; transform: rotate(45deg) translateY(0); transform-origin: right; top: 90px; left: 112px; width: 40px; height: 4px; background-color: #fff; }
+.man .leg.left.show { opacity: 1; transform: rotate(45deg) translateY(0); transform-origin: left; top: 164px; left: 148px; width: 40px; height: 4px; background-color: #fff; }
+.man .leg.right.show { opacity: 1; transform: rotate(-45deg) translateY(0); transform-origin: right; top: 164px; left: 112px; width: 40px; height: 4px; background-color: #fff; }
+
+/* خيارات الإجابة */
+.hangman-options { display: flex; flex-wrap: wrap; justify-content: center; margin-top: 20px; }
+.hangman-option {
+  padding: 12px 24px;
+  margin: 6px;
+  font-size: 1rem;
+  font-weight: bold;
+  border-radius: 12px;
+  cursor: pointer;
+  border: none;
+  background: linear-gradient(90deg,#3b82f6,#60a5fa);
+  color: #fff;
+  transition: all 0.3s ease;
+}
+.hangman-option:hover:not(:disabled) { transform: scale(1.1); box-shadow: 0 4px 15px rgba(0,0,0,0.3); }
+.hangman-option:disabled { background-color: #9ca3af; cursor: not-allowed; }
+
+/* التحكم */
+.hangman-controls { display: flex; justify-content: space-between; align-items: center; margin-top: 16px; }
+.attempts { font-weight: bold; font-size: 1.1rem; }
+
+.controls-buttons button {
+  padding: 10px 24px;
+  font-weight: 700;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+.restart-btn { background: linear-gradient(90deg,#f59e0b,#fbbf24); color: white; border: none; margin-right: 8px; }
+.restart-btn:hover { transform: scale(1.05); box-shadow: 0 4px 15px rgba(0,0,0,0.3); }
+.next-btn { background: linear-gradient(90deg,#10b981,#34d399); color: white; border: none; }
+.next-btn:hover { transform: scale(1.05); box-shadow: 0 4px 15px rgba(0,0,0,0.3); }

@@ -1,48 +1,48 @@
 import { useState, useEffect } from "react";
-
-import { Link, useNavigate } from "react-router-dom";
-import { auth } from "../../FireBaseDatabase/firebase";
+import { Link, useNavigate, useLocation } from "react-router-dom";
+import { auth, db } from "../../FireBaseDatabase/firebase";
 import { ToastContainer, toast } from "react-toastify";
-import { useLocation } from "react-router-dom";
-import { saveUserToFirestore } from "../../FireBaseDatabase/firestoreUtils";
-
+import "react-toastify/dist/ReactToastify.css";
 import {
   createUserWithEmailAndPassword,
   GoogleAuthProvider,
   getRedirectResult,
   signInWithRedirect,
 } from "firebase/auth";
+import { doc, setDoc } from "firebase/firestore";
 import logo from "../../assets/logo/logo.png";
-import "react-toastify/dist/ReactToastify.css";
+
 const RegisterForm = () => {
   const [success, setSuccess] = useState(false);
   const [hasSubmitted, setHasSubmitted] = useState(false);
   const navigate = useNavigate();
-
   const [loading, setLoading] = useState(false);
-  const showSuccess = (message) => toast.success(message);
-  const showError = (message) => toast.error(message);
+  const location = useLocation();
+  const { email: preEmail = "", password: prePassword = "" } =
+    location.state || {};
+  const [error, setError] = useState("");
+  const [formState, setFormState] = useState({
+    fullName: "",
+    email: preEmail,
+    username: "",
+    password: prePassword,
+    confirmPassword: "",
+    gender: "",
+    agree: false,
+  });
+  const [errors, setErrors] = useState({});
+
+  const style =
+    "w-full px-4 py-3 rounded-xl border border-gray-300 dark:border-gray-700 text-right placeholder:text-gray-400 dark:bg-gray-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-green-400";
+
+  const showSuccess = (msg) => toast.success(msg);
+  const showError = (msg) => toast.error(msg);
   const resetFeedback = () => {
     setError("");
     setErrors({});
     setSuccess(false);
   };
 
-  const location = useLocation();
-  const { email, password } = location.state || {};
-  const [error, setError] = useState("");
-  const [formState, setFormState] = useState({
-    fullName: "",
-    email: "",
-    username: "",
-    password: "",
-    confirmPassword: "",
-    gender: "",
-    agree: false,
-  });
-  const [errors, setErrors] = useState({});
-  const style =
-    "w-full px-4 py-3 rounded-xl border border-gray-300 dark:border-gray-700 text-right placeholder:text-gray-400 dark:bg-gray-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-green-400";
   function handleChange(e) {
     const { name, type, value, checked } = e.target;
     setFormState((prev) => ({
@@ -51,38 +51,42 @@ const RegisterForm = () => {
     }));
     setErrors((prev) => ({ ...prev, [name]: undefined }));
   }
+
   useEffect(() => {
     const handleRedirectResult = async () => {
       try {
         const result = await getRedirectResult(auth);
-        if (!result || !result.user) return; // ✅ No redirect result, exit silently
-
+        if (!result?.user) return;
         const user = result.user;
-        await saveUserToFirestore(user, {
-          name: user.displayName,
-          photoURL: user.photoURL,
-          provider: "google",
-          gender: "",
-          agree: true,
-        });
+
+        await setDoc(
+          doc(db, "users", user.uid),
+          {
+            name: user.displayName,
+            photoURL: user.photoURL,
+            provider: "google",
+            gender: "",
+            agree: true,
+            lastLogin: Date.now(),
+          },
+          { merge: true }
+        );
 
         setSuccess(true);
         showSuccess("✅ تم تسجيل الدخول باستخدام Google بنجاح! سيتم تحويلك...");
         setTimeout(() => navigate("/login"), 3000);
       } catch (err) {
-        // ✅ Only show error if result was expected
         if (err.code !== "auth/no-auth-event") {
           console.error(err);
           showError("❌ فشل إتمام تسجيل الدخول باستخدام Google.");
         }
       }
     };
-
     handleRedirectResult();
   }, [navigate]);
+
   const handleFirebaseError = (err) => {
     console.error("Firebase Error:", err);
-
     let message = "❌ حدث خطأ غير متوقع. حاول مرة أخرى.";
 
     switch (err.code) {
@@ -103,13 +107,13 @@ const RegisterForm = () => {
     }
 
     setError(message);
-    showError(message); // assuming you're using react-toastify
+    showError(message);
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     resetFeedback();
-    setHasSubmitted(true); // ✅ Trigger error visibility only after submission
+    setHasSubmitted(true);
     setLoading(true);
 
     const {
@@ -136,13 +140,19 @@ const RegisterForm = () => {
       );
       const user = userCredential.user;
 
-      await saveUserToFirestore(user, {
-        fullName,
-        username,
-        gender,
-        agree,
-        provider: "email",
-      });
+      await setDoc(
+        doc(db, "users", user.uid),
+        {
+          fullName,
+          username,
+          gender,
+          agree,
+          provider: "email",
+          email,
+          lastLogin: Date.now(),
+        },
+        { merge: true }
+      );
 
       setSuccess(true);
       showSuccess(
@@ -165,7 +175,7 @@ const RegisterForm = () => {
 
     try {
       const provider = new GoogleAuthProvider();
-      provider.setCustomParameters({ prompt: "consent" }); // force Gmail login
+      provider.setCustomParameters({ prompt: "consent" });
       await signInWithRedirect(auth, provider);
     } catch (err) {
       console.error(err);
@@ -176,10 +186,6 @@ const RegisterForm = () => {
 
   return (
     <>
-      <button type="submit" disabled={loading}>
-        {loading ? "جاري التسجيل..." : "تسجيل"}
-      </button>
-
       <div
         className="relative min-h-screen bg-gray-100 font-[Tajawal]"
         dir="rtl"
@@ -222,7 +228,6 @@ const RegisterForm = () => {
               </div>
             )}
 
-            {/* Form */}
             <form onSubmit={handleSubmit}>
               <div className="space-y-4 mb-6">
                 <input
@@ -243,11 +248,6 @@ const RegisterForm = () => {
                   required
                   className={style}
                 />
-                {errors.email && (
-                  <div className="text-red-500 text-sm mt-1 text-right">
-                    {errors.email}
-                  </div>
-                )}
                 <input
                   name="username"
                   value={formState.username}
@@ -266,11 +266,6 @@ const RegisterForm = () => {
                   required
                   className={style}
                 />
-                {errors.password && (
-                  <div className="text-red-500 text-sm mt-1 text-right">
-                    {errors.password}
-                  </div>
-                )}
                 <input
                   name="confirmPassword"
                   value={formState.confirmPassword}
@@ -280,11 +275,6 @@ const RegisterForm = () => {
                   required
                   className={style}
                 />
-                {errors.confirmPassword && (
-                  <div className="text-red-500 text-sm mt-1 text-right">
-                    {errors.confirmPassword}
-                  </div>
-                )}
                 <select
                   name="gender"
                   value={formState.gender}
@@ -296,10 +286,6 @@ const RegisterForm = () => {
                   <option value="male">ذكر</option>
                   <option value="female">أنثى</option>
                 </select>
-              </div>
-
-              {/* Terms and errors */}
-              <div className="space-y-6">
                 <div className="flex items-center gap-2 text-sm text-gray-600">
                   <input
                     id="terms"
@@ -317,79 +303,60 @@ const RegisterForm = () => {
                     أوافق على{" "}
                     <a
                       href="/terms"
-                      className="relative inline-block group font-medium overflow-hidden"
+                      className="text-[#22c55e] hover:text-[#1565c0] font-bold"
                     >
-                      <div className="px-1 py-0.5 relative">
-                        <div className="relative z-10 text-[#22c55e] transition-colors duration-500 group-hover:text-[#1565c0] text-[16px] font-bold">
-                          الشروط <span>و</span>الأحكام
-                        </div>
-                        <div className="absolute bottom-0 right-0 h-[2px] w-0 bg-[#1565c0] transition-all duration-500 group-hover:w-[85%]" />
-                      </div>
+                      الشروط والأحكام
                     </a>
                   </label>
                 </div>
+              </div>
 
-                {errors.general && (
-                  <div className="text-red-500 text-sm text-center">
-                    {errors.general}
-                  </div>
-                )}
+              <button
+                type="submit"
+                disabled={loading}
+                className={`w-full py-3 bg-green-500 text-white font-bold rounded-full transition-all duration-300 hover:bg-green-600 hover:scale-[1.02] ${
+                  loading ? "opacity-50 cursor-not-allowed" : ""
+                }`}
+              >
+                {loading ? "جارٍ الإنشاء..." : "إنشاء الحساب"}
+              </button>
 
-                {/* Submit button */}
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className={`w-full py-3 bg-green-500 text-white font-bold rounded-full transition-all duration-300 hover:bg-green-600 hover:scale-[1.02] ${
-                    loading ? "opacity-50 cursor-not-allowed" : ""
-                  }`}
+              <div className="relative text-center my-4">
+                <span className="bg-white px-4 text-gray-500 z-10 relative">
+                  أو
+                </span>
+                <div className="absolute top-1/2 left-0 right-0 h-px bg-gray-300 -z-0" />
+              </div>
+
+              <button
+                type="button"
+                onClick={handleGoogle}
+                className="w-full flex items-center justify-center gap-2 py-3 border border-gray-300 rounded-full bg-white transition-all duration-300 hover:shadow-lg hover:scale-[1.02]"
+              >
+                <img
+                  src="https://www.svgrepo.com/show/475656/google-color.svg"
+                  alt="Google logo"
+                  className="w-5 h-5"
+                />
+                <span className="text-sm font-medium text-gray-700">
+                  المتابعة باستخدام Google
+                </span>
+              </button>
+
+              <div className="flex flex-wrap items-center justify-center gap-2 text-[16px] text-gray-600 font-bold mt-4">
+                <div className="whitespace-nowrap">لديك حساب بالفعل؟</div>
+                <a
+                  href="/login"
+                  className="text-[#22c55e] hover:text-[#1565c0] font-bold"
                 >
-                  {loading ? "جارٍ الإنشاء..." : "إنشاء الحساب"}
-                </button>
-
-                {/* Divider */}
-                <div className="relative text-center">
-                  <span className="bg-white px-4 text-gray-500 z-10 relative">
-                    أو
-                  </span>
-                  <div className="absolute top-1/2 left-0 right-0 h-px bg-gray-300 -z-0" />
-                </div>
-
-                {/* Google button */}
-                <button
-                  type="button"
-                  onClick={handleGoogle}
-                  className="w-full flex items-center justify-center gap-2 py-3 border border-gray-300 rounded-full bg-white transition-all duration-300 hover:shadow-lg hover:scale-[1.02]"
-                >
-                  <img
-                    src="https://www.svgrepo.com/show/475656/google-color.svg"
-                    alt="Google logo"
-                    className="w-5 h-5"
-                  />
-                  <span className="text-sm font-medium text-gray-700">
-                    المتابعة باستخدام Google
-                  </span>
-                </button>
-
-                {/* Login link */}
-                <div className="flex flex-wrap items-center justify-center gap-2 text-[16px] text-gray-600 font-bold">
-                  <div className="whitespace-nowrap">لديك حساب بالفعل؟</div>
-                  <a
-                    href="/login"
-                    className="relative inline-block group font-medium overflow-hidden"
-                  >
-                    <div className="px-3 py-1 relative">
-                      <div className="relative z-10 flex items-center gap-1 text-[#22c55e] transition-colors duration-500 group-hover:text-[#1565c0]">
-                        تسجيل الدخول
-                      </div>
-                      <div className="absolute bottom-0 right-3 h-[2px] w-0 bg-[#1565c0] transition-all duration-500 group-hover:w-[83.5%]" />
-                    </div>
-                  </a>
-                </div>
+                  تسجيل الدخول
+                </a>
               </div>
             </form>
           </div>
         </div>
       </div>
+
       {hasSubmitted && error && (
         <div className="text-red-500 text-sm mt-2 text-center">{error}</div>
       )}
@@ -398,4 +365,5 @@ const RegisterForm = () => {
     </>
   );
 };
+
 export default RegisterForm;

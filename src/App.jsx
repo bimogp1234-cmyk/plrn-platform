@@ -7,6 +7,12 @@ import Main from "./components/Main/Main";
 import ProtectedRoute from "./components/Routes/ProtectedRoute";
 import Dashboard from "./components/Dashboard/Dashboard";
 import NotFoundPage from "./components/NotFound/NotFoundPage";
+import HangmanGame from "./components/HangmanGame/HangmanGame";
+import MemoryGame from "./components/MemoryGame/Memorygame";
+import MainComDep from "./components/Departments/ComputerDep/MainComDep";
+import PhysicDep from "./components/Departments/PhysicsDep/PhysicDep";
+import MathDep from "./components/Departments/MathDep/MathDep";
+import FirstAidDep from "./components/Departments/FirstAidDep/FirstAidDep";
 export default function App() {
   return (
     <div className="min-h-screen text-gray-900 relative">
@@ -19,6 +25,10 @@ export default function App() {
             <Route path="/register" element={<RegisterForm />} />
             <Route path="/forget-password" element={<ForgetPassword />} />
             <Route path="*" element={<NotFoundPage />} />
+            <Route path="maincomdep" element={<MainComDep />} />
+            <Route path="physicdep" element={<PhysicDep />} />
+            <Route path="mathdep" element={<MathDep />} />
+            <Route path="firstaid" element={<FirstAidDep />} />
             <Route
               path="/dashboard"
               element={
@@ -27,6 +37,9 @@ export default function App() {
                 </ProtectedRoute>
               }
             />
+
+            <Route path="/hangman" element={<HangmanGame />} />
+            <Route path="/memorycard" element={<MemoryGame />} />
           </Routes>
         </Router>
       </AuthProvider>

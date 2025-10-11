@@ -4,13 +4,13 @@ import { getFirestore } from "firebase/firestore";
 
 // Import the functions you need from the SDKs you need
 const firebaseConfig = {
-  apiKey: "AIzaSyCZ_6FzE9FtnUo432UycdOLALXId_0yJyU",
-  authDomain: "playlearn-b96ec.firebaseapp.com",
-  projectId: "playlearn-b96ec",
-  storageBucket: "playlearn-b96ec.firebasestorage.app",
-  messagingSenderId: "859742926301",
-  appId: "1:859742926301:web:4ffe88885e48d9af157234",
-  measurementId: "G-MLV3W579GH",
+  apiKey: "AIzaSyBeZdi-vHkNuRJ1hA_dQxuSUnOH0MiD1p4",
+  authDomain: "graduation-project-1f851.firebaseapp.com",
+  projectId: "graduation-project-1f851",
+  storageBucket: "graduation-project-1f851.firebasestorage.app",
+  messagingSenderId: "1031629784131",
+  appId: "1:1031629784131:web:062561de1c576d08c540f6",
+  measurementId: "G-QKZR8QKC1W",
 };
 
 // Initialize Firebase

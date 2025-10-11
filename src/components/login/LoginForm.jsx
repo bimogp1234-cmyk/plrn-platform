@@ -2,8 +2,11 @@ import { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { auth, db } from "../../FireBaseDatabase/firebase";
 import logo from "../../assets/logo/logo.png";
-import { signInWithEmailAndPassword } from "firebase/auth";
-import { signInWithPopup, GoogleAuthProvider } from "firebase/auth";
+import {
+  signInWithEmailAndPassword,
+  signInWithPopup,
+  GoogleAuthProvider,
+} from "firebase/auth";
 import { doc, setDoc } from "firebase/firestore";
 
 const LoginForm = () => {
@@ -17,7 +20,8 @@ const LoginForm = () => {
     const { name, value } = e.target;
     setFormState((prev) => ({ ...prev, [name]: value }));
   }
-  //handle submit
+
+  // Handle Email/Password login
   async function handleSubmit(e) {
     e.preventDefault();
     setLoading(true);
@@ -25,13 +29,24 @@ const LoginForm = () => {
 
     try {
       const { email, password } = formState;
-      await signInWithEmailAndPassword(auth, email, password);
+      const userCredential = await signInWithEmailAndPassword(
+        auth,
+        email,
+        password
+      );
+      const user = userCredential.user;
 
-      // setTimeout(() => {}, 1000);
+      // Save or merge user info in Firestore
+      await setDoc(
+        doc(db, "users", user.uid),
+        {
+          email: user.email,
+          lastLogin: Date.now(),
+        },
+        { merge: true } // Preserve existing fields
+      );
 
-      // Show success message or redirect
-      // alert("تم تسجيل الدخول بنجاح!");
-      window.location.href = "/dashboard"; // or your desired route
+      window.location.href = "/dashboard";
     } catch (error) {
       if (error.code === "auth/user-not-found") {
         setError("لا يوجد مستخدم بهذا البريد الإلكتروني.");
@@ -43,13 +58,12 @@ const LoginForm = () => {
       } else {
         setError("حدث خطأ أثناء تسجيل الدخول. حاول مرة أخرى.");
       }
-
       setTimeout(() => setError(""), 3000);
       setLoading(false);
     }
   }
 
-  //handle google
+  // Handle Google login
   async function handleGoogleLogin() {
     const provider = new GoogleAuthProvider();
     setLoading(true);
@@ -59,16 +73,18 @@ const LoginForm = () => {
       const result = await signInWithPopup(auth, provider);
       const user = result.user;
 
-      // Save user info to Firestore
-      await setDoc(doc(db, "users", user.uid), {
-        name: user.displayName,
-        email: user.email,
-        photoURL: user.photoURL,
-        provider: "google",
-      });
-
-      // Optional: show toast
-      // showToast("تم تسجيل الدخول باستخدام Google!", "success");
+      // Save user info to Firestore without overwriting existing fields
+      await setDoc(
+        doc(db, "users", user.uid),
+        {
+          name: user.displayName,
+          email: user.email,
+          photoURL: user.photoURL,
+          provider: "google",
+          lastLogin: Date.now(),
+        },
+        { merge: true }
+      );
 
       setTimeout(() => {
         window.location.href = "/dashboard";

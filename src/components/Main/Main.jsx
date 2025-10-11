@@ -4,7 +4,7 @@ import "@fontsource/tajawal";
 import Bubbles from "../Bubbles/Bubbles";
 import Navbar from "./Navbar";
 import Hero from "./Hero";
-import AboutBulbul from "./AboutBlarn";
+import AboutBlarn from "./AboutBlarn";
 import FAQ from "./FAQ";
 import Footer from "./Footer";
 
@@ -117,7 +117,7 @@ export default function ProgramsInteractive() {
 
         <Bubbles />
         <section id="about">
-          <AboutBulbul />
+          <AboutBlarn />
         </section>
         <section id="faq">
           <FAQ />
