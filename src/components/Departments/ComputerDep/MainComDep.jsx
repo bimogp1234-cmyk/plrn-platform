@@ -90,6 +90,7 @@ export default function MainComDep() {
       icon: <School />,
     },
     {
+      path: "flowchartgame",
       title: "مغامرة الخوارزميات",
       category: "الوحدة 3",
       level: "متوسط",

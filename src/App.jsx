@@ -13,6 +13,7 @@ import MainComDep from "./components/Departments/ComputerDep/MainComDep";
 import PhysicDep from "./components/Departments/PhysicsDep/PhysicDep";
 import MathDep from "./components/Departments/MathDep/MathDep";
 import FirstAidDep from "./components/Departments/FirstAidDep/FirstAidDep";
+import FlowchartGame from "./components/Games/FlowchartGame";
 export default function App() {
   return (
     <div className="min-h-screen text-gray-900 relative">
@@ -29,6 +30,7 @@ export default function App() {
             <Route path="physicdep" element={<PhysicDep />} />
             <Route path="mathdep" element={<MathDep />} />
             <Route path="firstaid" element={<FirstAidDep />} />
+            <Route path="flowchartgame" element={<FlowchartGame />} />
             <Route
               path="/dashboard"
               element={
