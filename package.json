@@ -18,6 +18,8 @@
     "@lottiefiles/react-lottie-player": "^3.6.0",
     "@mui/icons-material": "^7.3.2",
     "@mui/material": "^7.3.4",
+    "@react-three/drei": "^9.122.0",
+    "@react-three/fiber": "^8.18.0",
     "firebase": "^12.4.0",
     "framer-motion": "^12.23.16",
     "lottie-react": "^2.4.1",
@@ -28,7 +30,9 @@
     "react-dnd-html5-backend": "^16.0.1",
     "react-dom": "^18.2.0",
     "react-router-dom": "^7.9.3",
-    "react-toastify": "^11.0.5"
+    "react-toastify": "^11.0.5",
+    "three": "^0.168.0",
+    "zustand": "^5.0.8"
   },
   "devDependencies": {
     "@vitejs/plugin-react-swc": "^4.1.0",

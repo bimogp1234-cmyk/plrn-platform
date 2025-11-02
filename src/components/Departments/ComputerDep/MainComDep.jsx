@@ -1,4 +1,4 @@
-// MainComDep.jsx - FIXED NO REFRESH VERSION
+// MainComDep.jsx - COMPLETELY FIXED VERSION
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Avatar, Button, useMediaQuery, useTheme } from "@mui/material";
@@ -24,6 +24,7 @@ import {
   serverTimestamp,
   collection,
   getDocs,
+  writeBatch,
 } from "firebase/firestore";
 import { db } from "./../../../FireBaseDatabase/firebase";
 
@@ -47,19 +48,12 @@ export default function MainComDep() {
   const photo =
     userData?.photoURL || "https://placehold.co/100x100/10b981/ffffff?text=U";
 
-  const [showContent, setShowContent] = useState(false);
   const [progressData, setProgressData] = useState([]);
   const [unlockedUnits, setUnlockedUnits] = useState([0]);
   const [userScore, setUserScore] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
 
-  // 🎯 Use refs to track previous values and prevent infinite loops
-  const previousProgressData = useRef(null);
-  const previousUnlockedUnits = useRef(null);
-  const previousUserScore = useRef(0);
-  const isInitialLoad = useRef(true);
-
-  // 🎯 Memoized data definitions to prevent re-renders
+  // 🎯 Memoized data definitions
   const { lessonsData, announcementsData, gamesData } = useMemo(
     () => ({
       lessonsData: [
@@ -208,7 +202,7 @@ export default function MainComDep() {
     []
   );
 
-  // 🎯 Memoized helper functions
+  // 🎯 Initialize progress data
   const getInitialProgressData = useCallback(() => {
     return [
       {
@@ -258,6 +252,7 @@ export default function MainComDep() {
     ];
   }, []);
 
+  // 🎯 Get games by unit
   const getGamesByUnit = useCallback(
     (unitId) => {
       return gamesData.filter((game) => game.unit === unitId);
@@ -265,6 +260,7 @@ export default function MainComDep() {
     [gamesData]
   );
 
+  // 🎯 Get lessons by unit
   const getLessonsByUnit = useCallback(
     (unitId) => {
       return lessonsData.filter((lesson) => lesson.unit === unitId);
@@ -272,6 +268,25 @@ export default function MainComDep() {
     [lessonsData]
   );
 
+  // 🎯 Check if unit is unlocked
+  const isUnitUnlocked = useCallback(
+    (unitId) => {
+      return unlockedUnits.includes(unitId);
+    },
+    [unlockedUnits]
+  );
+
+  // 🎯 Calculate total progress
+  const getTotalProgress = useCallback(() => {
+    if (progressData.length === 0) return 0;
+    const totalPercentage = progressData.reduce(
+      (sum, unit) => sum + (unit.percentage || 0),
+      0
+    );
+    return Math.round(totalPercentage / progressData.length);
+  }, [progressData]);
+
+  // 🎯 Get grid classes for responsive design
   const getGridClasses = useCallback(
     (type) => {
       switch (type) {
@@ -296,25 +311,12 @@ export default function MainComDep() {
     [isMobile, isTablet]
   );
 
-  const isUnitUnlocked = useCallback(
-    (unitId) => {
-      return unlockedUnits.includes(unitId);
-    },
-    [unlockedUnits]
-  );
-
-  const getTotalProgress = useCallback(() => {
-    if (progressData.length === 0) return 0;
-    const totalPercentage = progressData.reduce(
-      (sum, unit) => sum + (unit.percentage || 0),
-      0
-    );
-    return Math.round(totalPercentage / progressData.length);
-  }, [progressData]);
-
   // 🎯 Load individual game scores from Firebase
   const loadIndividualGameScores = useCallback(async () => {
-    if (!userData?.uid) return {};
+    if (!userData?.uid) {
+      console.log("❌ No user UID found");
+      return {};
+    }
 
     try {
       const scoresCollection = collection(db, "users", userData.uid, "scores");
@@ -342,7 +344,7 @@ export default function MainComDep() {
   // 🎯 Calculate unit progress based on game scores
   const calculateUnitProgress = useCallback(
     (unit, gameScores) => {
-      const unitGames = gamesData.filter((game) => game.unit === unit.id);
+      const unitGames = getGamesByUnit(unit.id);
       let totalScore = 0;
       let maxPossibleScore = 0;
       let completedGames = 0;
@@ -374,7 +376,7 @@ export default function MainComDep() {
         maxPossibleScore,
       };
     },
-    [gamesData]
+    [getGamesByUnit]
   );
 
   // 🎯 Calculate which units should be unlocked
@@ -391,113 +393,10 @@ export default function MainComDep() {
     return unlocked;
   }, []);
 
-  // 🎯 Save progress to Firebase - OPTIMIZED: Only save when data actually changes
-  const saveProgressToFirebase = useCallback(async () => {
-    if (!userData?.uid) return;
-
-    // Check if data actually changed
-    const progressChanged =
-      JSON.stringify(previousProgressData.current) !==
-      JSON.stringify(progressData);
-    const scoreChanged = previousUserScore.current !== userScore;
-    const unitsChanged =
-      JSON.stringify(previousUnlockedUnits.current) !==
-      JSON.stringify(unlockedUnits);
-
-    if (!progressChanged && !scoreChanged && !unitsChanged) {
-      console.log("🔄 No changes detected, skipping Firebase save");
-      return;
-    }
-
-    try {
-      const userRef = doc(db, "users", userData.uid);
-      const progressRef = doc(db, "users", userData.uid, "progress", "main");
-      const scoresRef = doc(db, "users", userData.uid, "scores", "overall");
-      const leaderboardRef = doc(db, "leaderboard", userData.uid);
-
-      const totalProgress = getTotalProgress();
-      const completedGames = progressData.reduce(
-        (count, unit) => count + (unit.completedGames || 0),
-        0
-      );
-      const completedUnits = progressData.filter(
-        (unit) => unit.completed
-      ).length;
-
-      console.log("💾 Saving to Firebase:", {
-        totalScore: userScore,
-        totalProgress,
-        completedGames,
-        completedUnits,
-        unlockedUnits,
-      });
-
-      // Update user profile with scores
-      await setDoc(
-        userRef,
-        {
-          email: userData.email,
-          name: userData.fullName || userData.name,
-          photoURL: userData.photoURL,
-          totalScore: userScore,
-          totalProgress: totalProgress,
-          lastUpdated: serverTimestamp(),
-        },
-        { merge: true }
-      );
-
-      // Update progress data
-      await setDoc(
-        progressRef,
-        {
-          progressData: progressData,
-          unlockedUnits: unlockedUnits,
-          totalProgress: totalProgress,
-          lastUpdated: serverTimestamp(),
-        },
-        { merge: true }
-      );
-
-      // Update overall scores
-      await setDoc(
-        scoresRef,
-        {
-          totalScore: userScore,
-          completedGames: completedGames,
-          completedUnits: completedUnits,
-          lastUpdated: serverTimestamp(),
-        },
-        { merge: true }
-      );
-
-      // Update public leaderboard entry
-      await setDoc(
-        leaderboardRef,
-        {
-          userId: userData.uid,
-          name: userData.fullName || userData.name,
-          photoURL: userData.photoURL,
-          totalScore: userScore,
-          completedGames: completedGames,
-          completedUnits: completedUnits,
-          lastUpdated: serverTimestamp(),
-        },
-        { merge: true }
-      );
-
-      console.log("✅ All progress saved to Firestore successfully");
-
-      // Update refs with current values
-      previousProgressData.current = [...progressData];
-      previousUserScore.current = userScore;
-      previousUnlockedUnits.current = [...unlockedUnits];
-    } catch (error) {
-      console.error("❌ Error saving to Firestore:", error);
-    }
-  }, [userData, progressData, userScore, unlockedUnits, getTotalProgress]);
-
   // 🎯 Recalculate all progress from individual game scores
   const recalculateAllProgress = useCallback(async () => {
+    console.log("🔄 Starting progress recalculation...");
+
     try {
       const gameScores = await loadIndividualGameScores();
       const initialProgress = getInitialProgressData();
@@ -527,12 +426,18 @@ export default function MainComDep() {
       // Update unlocked units
       const newUnlockedUnits = calculateUnlockedUnits(updatedProgress);
 
+      console.log("📊 Final progress data:", updatedProgress);
+      console.log("🔓 Final unlocked units:", newUnlockedUnits);
+
       // Update states
       setProgressData(updatedProgress);
       setUserScore(newTotalScore);
       setUnlockedUnits(newUnlockedUnits);
+
+      return { updatedProgress, newTotalScore, newUnlockedUnits };
     } catch (error) {
       console.error("❌ Error recalculating progress:", error);
+      throw error;
     }
   }, [
     loadIndividualGameScores,
@@ -541,45 +446,109 @@ export default function MainComDep() {
     calculateUnlockedUnits,
   ]);
 
-  // 🎯 Load from Firebase
-  const loadFirestoreProgress = useCallback(async () => {
-    if (!userData?.uid) return null;
+  // 🎯 Save progress to Firebase
+  const saveProgressToFirebase = useCallback(async () => {
+    if (!userData?.uid) {
+      console.log("❌ No user UID, skipping Firebase save");
+      return;
+    }
 
     try {
+      const userRef = doc(db, "users", userData.uid);
       const progressRef = doc(db, "users", userData.uid, "progress", "main");
       const scoresRef = doc(db, "users", userData.uid, "scores", "overall");
+      const leaderboardRef = doc(db, "leaderboard", userData.uid);
 
-      const [progressSnap, scoresSnap] = await Promise.all([
-        getDoc(progressRef),
-        getDoc(scoresRef),
-      ]);
+      const totalProgress = getTotalProgress();
+      const completedGames = progressData.reduce(
+        (count, unit) => count + (unit.completedGames || 0),
+        0
+      );
+      const completedUnits = progressData.filter(
+        (unit) => unit.completed
+      ).length;
 
-      if (progressSnap.exists() && scoresSnap.exists()) {
-        const progressData = progressSnap.data();
-        const scoresData = scoresSnap.data();
+      console.log("💾 Saving to Firebase:", {
+        totalScore: userScore,
+        totalProgress,
+        completedGames,
+        completedUnits,
+        unlockedUnits,
+      });
 
-        return {
-          progressData: progressData.progressData || [],
-          unlockedUnits: progressData.unlockedUnits || [0],
-          userScore: scoresData.totalScore || 0,
-        };
-      }
+      // Use batch write for atomic operations
+      const batch = writeBatch(db);
+
+      // Update user profile with scores
+      batch.set(
+        userRef,
+        {
+          email: userData.email,
+          name: userData.fullName || userData.name,
+          photoURL: userData.photoURL,
+          totalScore: userScore,
+          totalProgress: totalProgress,
+          lastUpdated: serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      // Update progress data
+      batch.set(
+        progressRef,
+        {
+          progressData: progressData,
+          unlockedUnits: unlockedUnits,
+          totalProgress: totalProgress,
+          lastUpdated: serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      // Update overall scores
+      batch.set(
+        scoresRef,
+        {
+          totalScore: userScore,
+          completedGames: completedGames,
+          completedUnits: completedUnits,
+          lastUpdated: serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      // Update public leaderboard entry
+      batch.set(
+        leaderboardRef,
+        {
+          userId: userData.uid,
+          name: userData.fullName || userData.name,
+          photoURL: userData.photoURL,
+          totalScore: userScore,
+          completedGames: completedGames,
+          completedUnits: completedUnits,
+          lastUpdated: serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      await batch.commit();
+      console.log("✅ All progress saved to Firestore successfully");
     } catch (error) {
-      console.error("Error loading from Firestore:", error);
+      console.error("❌ Error saving to Firestore:", error);
     }
-    return null;
-  }, [userData?.uid]);
+  }, [userData, progressData, userScore, unlockedUnits, getTotalProgress]);
 
-  // 🎯 Update game progress and scores - OPTIMIZED
+  // 🎯 Update game progress and scores
   const updateGameProgress = useCallback(
     async (unitId, gameId, gameData) => {
-      if (unitId === null || gameId === null) return;
+      if (unitId === null || gameId === null) {
+        console.log("❌ Missing unitId or gameId");
+        return;
+      }
 
       const score =
         gameData?.score || gameData?.finalScore || gameData?.points || 0;
-      const currentLevel = gameData?.currentLevel || gameData?.level || 0;
-      const progressPercentage =
-        gameData?.progressPercentage || gameData?.percentage || 0;
       const completed = gameData?.completed || false;
 
       console.log("🔄 Updating game progress:", {
@@ -587,8 +556,7 @@ export default function MainComDep() {
         gameId,
         score,
         completed,
-        currentLevel,
-        progressPercentage,
+        gameData,
       });
 
       try {
@@ -603,8 +571,6 @@ export default function MainComDep() {
               score,
               points: score,
               completed: completed || false,
-              currentLevel: currentLevel,
-              progressPercentage: progressPercentage,
               lastPlayed: serverTimestamp(),
             },
             { merge: true }
@@ -612,10 +578,8 @@ export default function MainComDep() {
           console.log("✅ Individual score saved for", gameId);
         }
 
-        // Only recalculate if there's actual progress
-        if (score > 0 || completed) {
-          await recalculateAllProgress();
-        }
+        // Always recalculate to ensure consistency
+        await recalculateAllProgress();
       } catch (error) {
         console.error("❌ Error in updateGameProgress:", error);
       }
@@ -623,13 +587,13 @@ export default function MainComDep() {
     [userData?.uid, recalculateAllProgress]
   );
 
-  // 🎯 Game completion handler - OPTIMIZED
+  // 🎯 Game completion handler
   useEffect(() => {
     const handleGameCompletion = (event) => {
       // Check if this is a game completion message
       if (event.data && event.data.type === "GAME_COMPLETE") {
         const { unitId, gameId, gameData } = event.data;
-        console.log("🎯 Game completion processed:", {
+        console.log("🎯 Game completion processed from message:", {
           unitId,
           gameId,
           gameData,
@@ -645,7 +609,7 @@ export default function MainComDep() {
     // Also check for completion data in location state (when navigating back)
     if (location.state?.gameCompletion) {
       const { unitId, gameId, gameData } = location.state;
-      console.log("🔄 Game completion from navigation:", {
+      console.log("🔄 Game completion from navigation state:", {
         unitId,
         gameId,
         gameData,
@@ -659,34 +623,49 @@ export default function MainComDep() {
     return () => window.removeEventListener("message", handleGameCompletion);
   }, [location.state, navigate, updateGameProgress]);
 
-  // Initialize progress system - OPTIMIZED
+  // 🎯 Initialize progress system
   useEffect(() => {
     const initializeProgress = async () => {
+      console.log("🚀 Initializing progress system...");
+
       if (!userData?.uid) {
+        console.log("👤 No user ID, using default progress");
+        const initialProgress = getInitialProgressData();
+        setProgressData(initialProgress);
+        setUnlockedUnits([0]);
+        setUserScore(0);
         setIsLoading(false);
         return;
       }
 
       setIsLoading(true);
-      console.log("🔄 Initializing progress system...");
 
       try {
-        // Try to load from Firebase first
-        const firestoreProgress = await loadFirestoreProgress();
+        console.log("🔄 Checking for existing progress in Firebase...");
 
-        if (firestoreProgress) {
-          console.log("✅ Using Firestore data");
-          setProgressData(firestoreProgress.progressData);
-          setUnlockedUnits(firestoreProgress.unlockedUnits);
-          setUserScore(firestoreProgress.userScore);
+        // Try to load existing progress from Firebase
+        const progressRef = doc(db, "users", userData.uid, "progress", "main");
+        const progressSnap = await getDoc(progressRef);
 
-          // Initialize refs
-          previousProgressData.current = [...firestoreProgress.progressData];
-          previousUnlockedUnits.current = [...firestoreProgress.unlockedUnits];
-          previousUserScore.current = firestoreProgress.userScore;
+        if (progressSnap.exists()) {
+          const progressData = progressSnap.data();
+          console.log("✅ Found existing progress:", progressData);
+
+          setProgressData(
+            progressData.progressData || getInitialProgressData()
+          );
+          setUnlockedUnits(progressData.unlockedUnits || [0]);
+
+          // Load user score
+          const scoresRef = doc(db, "users", userData.uid, "scores", "overall");
+          const scoresSnap = await getDoc(scoresRef);
+          if (scoresSnap.exists()) {
+            const scoresData = scoresSnap.data();
+            setUserScore(scoresData.totalScore || 0);
+          }
         } else {
-          console.log("🔄 Calculating from individual game scores");
-          // Recalculate everything from individual game scores
+          console.log("📝 No existing progress, creating new...");
+          // No existing progress, create new
           await recalculateAllProgress();
         }
       } catch (error) {
@@ -696,24 +675,17 @@ export default function MainComDep() {
         setProgressData(initialProgress);
         setUnlockedUnits([0]);
         setUserScore(0);
-
-        // Initialize refs
-        previousProgressData.current = [...initialProgress];
-        previousUnlockedUnits.current = [0];
-        previousUserScore.current = 0;
       }
 
       setIsLoading(false);
-      setTimeout(() => setShowContent(true), 500);
-      isInitialLoad.current = false;
     };
 
     initializeProgress();
-  }, [userData?.uid]);
+  }, [userData?.uid, getInitialProgressData, recalculateAllProgress]);
 
-  // 🎯 Save to Firebase when data changes - OPTIMIZED
+  // 🎯 Save to Firebase when data changes
   useEffect(() => {
-    if (isInitialLoad.current || !userData?.uid || isLoading) return;
+    if (isLoading || !userData?.uid || progressData.length === 0) return;
 
     console.log("🔄 Data changed, saving to Firebase...");
     saveProgressToFirebase();
@@ -726,14 +698,11 @@ export default function MainComDep() {
     saveProgressToFirebase,
   ]);
 
-  // 🎯 REAL-TIME Firestore listeners - OPTIMIZED: Only update when necessary
+  // 🎯 REAL-TIME Firestore listeners
   useEffect(() => {
     if (!userData?.uid) return;
 
-    console.log(
-      "👂 Setting up optimized real-time listeners for user:",
-      userData.uid
-    );
+    console.log("👂 Setting up real-time listeners for user:", userData.uid);
 
     const progressRef = doc(db, "users", userData.uid, "progress", "main");
     const overallRef = doc(db, "users", userData.uid, "scores", "overall");
@@ -745,20 +714,8 @@ export default function MainComDep() {
           const data = snap.data();
           console.log("📊 Real-time progress update:", data);
 
-          // Only update if data actually changed
-          setProgressData((prev) => {
-            if (JSON.stringify(prev) !== JSON.stringify(data.progressData)) {
-              return data.progressData;
-            }
-            return prev;
-          });
-
-          setUnlockedUnits((prev) => {
-            if (JSON.stringify(prev) !== JSON.stringify(data.unlockedUnits)) {
-              return data.unlockedUnits;
-            }
-            return prev;
-          });
+          setProgressData(data.progressData || []);
+          setUnlockedUnits(data.unlockedUnits || [0]);
         }
       },
       (err) => console.error("Progress snapshot error:", err)
@@ -770,15 +727,8 @@ export default function MainComDep() {
         if (snap.exists()) {
           const data = snap.data();
           const newScore = data.totalScore || 0;
-
-          // Only update if score actually changed
-          setUserScore((prev) => {
-            if (prev !== newScore) {
-              console.log("💰 Real-time score update:", newScore);
-              return newScore;
-            }
-            return prev;
-          });
+          console.log("💰 Real-time score update:", newScore);
+          setUserScore(newScore);
         }
       },
       (err) => console.error("Overall scores snapshot error:", err)
@@ -790,24 +740,16 @@ export default function MainComDep() {
     };
   }, [userData?.uid]);
 
-  const showToast = useCallback((message, type) => {
-    console.log(`${type}: ${message}`);
-    // You can replace this with your actual toast system
-    if (typeof window !== "undefined" && window.alert) {
-      window.alert(`${type}: ${message}`);
-    }
-  }, []);
-
   // 🎯 Handle navigation
   const handleOpen = useCallback(
     (path, unitId = null, gameId = null) => {
       if (!path) {
-        showToast("المسار غير متاح حالياً.", "info");
+        alert("المسار غير متاح حالياً.");
         return;
       }
 
       if (unitId !== null && !unlockedUnits.includes(unitId)) {
-        showToast("يجب إكمال الوحدة السابقة أولاً!", "warning");
+        alert("يجب إكمال الوحدة السابقة أولاً!");
         return;
       }
 
@@ -818,10 +760,58 @@ export default function MainComDep() {
         gameId: gameId,
       };
 
+      console.log("🎯 Navigating to:", path, "with state:", gameState);
       navigate(`/${path}`, { state: gameState });
     },
-    [showToast, unlockedUnits, userData, darkMode, navigate]
+    [unlockedUnits, userData, darkMode, navigate]
   );
+
+  // 🎯 Debug function to reset progress
+  const resetProgress = async () => {
+    if (!userData?.uid) return;
+
+    if (
+      window.confirm(
+        "هل أنت متأكد من إعادة تعيين التقدم؟ سيتم حذف جميع بياناتك."
+      )
+    ) {
+      try {
+        // Delete all scores
+        const scoresCollection = collection(
+          db,
+          "users",
+          userData.uid,
+          "scores"
+        );
+        const scoresSnapshot = await getDocs(scoresCollection);
+
+        const deletePromises = scoresSnapshot.docs.map((doc) =>
+          setDoc(
+            doc.ref,
+            {
+              score: 0,
+              completed: false,
+              lastPlayed: serverTimestamp(),
+            },
+            { merge: true }
+          )
+        );
+
+        await Promise.all(deletePromises);
+
+        // Reset progress
+        const initialProgress = getInitialProgressData();
+        setProgressData(initialProgress);
+        setUnlockedUnits([0]);
+        setUserScore(0);
+
+        alert("تم إعادة تعيين التقدم بنجاح!");
+      } catch (error) {
+        console.error("Error resetting progress:", error);
+        alert("حدث خطأ أثناء إعادة التعيين");
+      }
+    }
+  };
 
   if (isLoading) {
     return (
@@ -872,6 +862,15 @@ export default function MainComDep() {
           </h1>
         </div>
         <div className="flex items-center space-x-3 sm:space-x-4">
+          <Button
+            onClick={resetProgress}
+            variant="outlined"
+            color="warning"
+            size={isMobile ? "small" : "medium"}
+            className={isMobile ? "text-xs" : ""}
+          >
+            إعادة تعيين
+          </Button>
           <span
             className={`font-semibold ${isMobile ? "text-sm" : "text-base"}`}
           >
@@ -941,489 +940,498 @@ export default function MainComDep() {
         </div>
       </div>
 
-      {/* Main content */}
-      {showContent && (
-        <div
-          className={`container max-w-7xl grid gap-4 sm:gap-6 ${
-            isDesktop ? "grid-cols-1 lg:grid-cols-4" : "grid-cols-1"
-          }`}
+      {/* Debug Info */}
+      <div className="w-full max-w-7xl mb-4">
+        <details
+          className={`text-sm ${darkMode ? "text-gray-300" : "text-gray-600"}`}
         >
-          {/* Left: Progress & Leaderboard */}
-          <div className="space-y-4 sm:space-y-6">
-            {/* Progress */}
-            <div
-              className={`rounded-2xl p-4 sm:p-6 shadow-lg ${
-                darkMode ? "bg-gray-800/60" : "bg-white"
-              }`}
-            >
-              <h3
-                className={`font-bold mb-4 flex items-center ${
-                  isMobile ? "text-lg" : "text-xl"
-                }`}
-              >
-                <Gamepad className="ml-2 text-teal-500" /> تقدمي الدراسي
-              </h3>
-              {progressData.map((unit) => (
-                <div className="mb-4 group" key={unit.id}>
-                  <div
-                    className={`flex justify-between mb-1 font-semibold ${
-                      isMobile ? "text-sm" : "text-base"
-                    }`}
-                  >
-                    <div className="flex items-center">
-                      {unit.completed ? (
-                        <CheckCircle
-                          className="text-green-500 mr-2"
-                          fontSize={isMobile ? "small" : "medium"}
-                        />
-                      ) : isUnitUnlocked(unit.id) ? (
-                        <LockOpen
-                          className="text-blue-500 mr-2"
-                          fontSize={isMobile ? "small" : "medium"}
-                        />
-                      ) : (
-                        <Lock
-                          className="text-gray-500 mr-2"
-                          fontSize={isMobile ? "small" : "medium"}
-                        />
-                      )}
-                      <span className={isMobile ? "text-xs" : "text-sm"}>
-                        {isMobile ? `الوحدة ${unit.id + 1}` : unit.label}
-                      </span>
-                    </div>
-                    <span>{unit.percentage}%</span>
-                  </div>
-                  <div className="w-full bg-gray-200 dark:bg-gray-700 h-3 sm:h-4 rounded-full overflow-hidden">
-                    <div
-                      className={`h-full bg-gradient-to-r ${
-                        {
-                          teal: "from-teal-400 to-cyan-500",
-                          pink: "from-pink-500 to-rose-500",
-                          amber: "from-amber-400 to-orange-500",
-                          sky: "from-sky-400 to-blue-500",
-                        }[unit.color]
-                      } rounded-full transition-all duration-1000 flex justify-center items-center group-hover:scale-x-[1.05]`}
-                      style={{ width: `${unit.percentage}%` }}
-                    >
-                      {unit.percentage >= 100 && (
-                        <CheckCircle fontSize="small" className="text-white" />
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex justify-between text-xs text-gray-500 mt-1">
-                    <span>
-                      {unit.completedGames || 0} /{" "}
-                      {getGamesByUnit(unit.id).length} ألعاب مكتملة
-                    </span>
-                    <span>
-                      {unit.totalScore || 0} / {unit.maxPossibleScore || 0} نقطة
-                    </span>
-                  </div>
-                  {!isUnitUnlocked(unit.id) && (
-                    <p
-                      className={`text-gray-500 mt-1 ${
-                        isMobile ? "text-xs" : "text-sm"
-                      }`}
-                    >
-                      تحتاج {unit.requiredScore}% لإلغاء القفل
-                    </p>
-                  )}
-                </div>
-              ))}
-            </div>
-
-            {/* Leaderboard - Hide on mobile if too crowded */}
-            {!isMobile && (
-              <Leaderboard
-                darkMode={darkMode}
-                userId={userData?.uid}
-                userScore={userScore}
-                isMobile={isMobile}
-              />
-            )}
+          <summary>معلومات التصحيح (Debug)</summary>
+          <div className="mt-2 p-2 bg-black/20 rounded">
+            <p>الوحدات المفتوحة: {unlockedUnits.join(", ")}</p>
+            <p>إجمالي النقاط: {userScore}</p>
+            <p>عدد الوحدات: {progressData.length}</p>
+            <p>معرف المستخدم: {userData?.uid || "غير متوفر"}</p>
           </div>
+        </details>
+      </div>
 
-          {/* Right: Units, Lessons & Games */}
+      {/* Main content */}
+      <div
+        className={`container max-w-7xl grid gap-4 sm:gap-6 ${
+          isDesktop ? "grid-cols-1 lg:grid-cols-4" : "grid-cols-1"
+        }`}
+      >
+        {/* Left: Progress & Leaderboard */}
+        <div className="space-y-4 sm:space-y-6">
+          {/* Progress */}
           <div
-            className={`space-y-4 sm:space-y-6 ${
-              isDesktop ? "lg:col-span-3" : ""
+            className={`rounded-2xl p-4 sm:p-6 shadow-lg ${
+              darkMode ? "bg-gray-800/60" : "bg-white"
             }`}
           >
-            {/* Units Section */}
+            <h3
+              className={`font-bold mb-4 flex items-center ${
+                isMobile ? "text-lg" : "text-xl"
+              }`}
+            >
+              <Gamepad className="ml-2 text-teal-500" /> تقدمي الدراسي
+            </h3>
             {progressData.map((unit) => (
-              <div key={unit.id} className="space-y-4">
-                {/* Unit Header */}
+              <div className="mb-4 group" key={unit.id}>
                 <div
-                  className={`rounded-2xl p-4 sm:p-6 shadow-lg ${
-                    darkMode ? "bg-gray-800/60" : "bg-white"
-                  } ${!isUnitUnlocked(unit.id) ? "opacity-60" : ""}`}
+                  className={`flex justify-between mb-1 font-semibold ${
+                    isMobile ? "text-sm" : "text-base"
+                  }`}
                 >
+                  <div className="flex items-center">
+                    {unit.completed ? (
+                      <CheckCircle
+                        className="text-green-500 mr-2"
+                        fontSize={isMobile ? "small" : "medium"}
+                      />
+                    ) : isUnitUnlocked(unit.id) ? (
+                      <LockOpen
+                        className="text-blue-500 mr-2"
+                        fontSize={isMobile ? "small" : "medium"}
+                      />
+                    ) : (
+                      <Lock
+                        className="text-gray-500 mr-2"
+                        fontSize={isMobile ? "small" : "medium"}
+                      />
+                    )}
+                    <span className={isMobile ? "text-xs" : "text-sm"}>
+                      {isMobile ? `الوحدة ${unit.id + 1}` : unit.label}
+                    </span>
+                  </div>
+                  <span>{unit.percentage}%</span>
+                </div>
+                <div className="w-full bg-gray-200 dark:bg-gray-700 h-3 sm:h-4 rounded-full overflow-hidden">
                   <div
-                    className={`flex items-center justify-between mb-4 sm:mb-6 ${
-                      isMobile ? "flex-col gap-2 items-start" : ""
+                    className={`h-full bg-gradient-to-r ${
+                      {
+                        teal: "from-teal-400 to-cyan-500",
+                        pink: "from-pink-500 to-rose-500",
+                        amber: "from-amber-400 to-orange-500",
+                        sky: "from-sky-400 to-blue-500",
+                      }[unit.color]
+                    } rounded-full transition-all duration-1000 flex justify-center items-center group-hover:scale-x-[1.05]`}
+                    style={{ width: `${unit.percentage}%` }}
+                  >
+                    {unit.percentage >= 100 && (
+                      <CheckCircle fontSize="small" className="text-white" />
+                    )}
+                  </div>
+                </div>
+                <div className="flex justify-between text-xs text-gray-500 mt-1">
+                  <span>
+                    {unit.completedGames || 0} /{" "}
+                    {getGamesByUnit(unit.id).length} ألعاب مكتملة
+                  </span>
+                  <span>
+                    {unit.totalScore || 0} / {unit.maxPossibleScore || 0} نقطة
+                  </span>
+                </div>
+                {!isUnitUnlocked(unit.id) && unit.id > 0 && (
+                  <p
+                    className={`text-gray-500 mt-1 ${
+                      isMobile ? "text-xs" : "text-sm"
                     }`}
                   >
-                    <h2
-                      className={`font-bold text-green-400 ${
-                        isMobile ? "text-xl" : "text-2xl"
-                      }`}
-                    >
-                      {unit.label}
-                    </h2>
-                    <div className="flex items-center space-x-2">
-                      {!isUnitUnlocked(unit.id) && (
-                        <Lock className="text-red-500" />
-                      )}
-                      <span
-                        className={`px-3 py-1 rounded-full bg-green-500/20 text-green-600 dark:text-green-400 ${
-                          isMobile ? "text-xs" : "text-sm"
-                        }`}
-                      >
-                        {unit.percentage}% مكتمل
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Lessons for this unit */}
-                  {getLessonsByUnit(unit.id).length > 0 && (
-                    <div className="mb-6 sm:mb-8">
-                      <h3
-                        className={`font-bold mb-4 sm:mb-6 text-green-400 text-center ${
-                          isMobile ? "text-xl" : "text-2xl"
-                        }`}
-                      >
-                        🧩 الدروس التفاعلية
-                      </h3>
-                      <div
-                        className={`grid gap-4 sm:gap-6 ${getGridClasses(
-                          "lessons"
-                        )}`}
-                      >
-                        {getLessonsByUnit(unit.id).map(
-                          (lesson, lessonIndex) => (
-                            <div
-                              key={lessonIndex}
-                              className={`relative rounded-2xl overflow-hidden shadow-lg transform transition-all duration-500 hover:scale-[1.05] cursor-pointer group ${
-                                !isUnitUnlocked(unit.id)
-                                  ? "opacity-50 cursor-not-allowed"
-                                  : ""
-                              }`}
-                              onClick={() =>
-                                isUnitUnlocked(unit.id) &&
-                                handleOpen(
-                                  `lesson-${unit.id}-${lessonIndex}`,
-                                  unit.id
-                                )
-                              }
-                            >
-                              {/* Animated Background Gradient */}
-                              <div
-                                className={`absolute inset-0 scale-x-0 group-hover:scale-x-100 origin-left transition-transform duration-700 bg-gradient-to-br ${lesson.gradient}`}
-                              ></div>
-
-                              {/* Content */}
-                              <div className="relative z-10 flex flex-col items-center justify-center p-4 sm:p-6 text-center min-h-[120px] sm:min-h-[140px]">
-                                <span className="text-2xl sm:text-3xl mb-2 sm:mb-3 transition-transform duration-500 group-hover:animate-bounce">
-                                  {lesson.emoji}
-                                </span>
-                                <span
-                                  className={`font-bold ${
-                                    isMobile ? "text-base" : "text-lg"
-                                  }`}
-                                >
-                                  {lesson.title}
-                                </span>
-                                <p
-                                  className={`mt-2 opacity-75 ${
-                                    isMobile ? "text-xs" : "text-sm"
-                                  }`}
-                                >
-                                  {lesson.description}
-                                </p>
-                                {!isUnitUnlocked(unit.id) && (
-                                  <Lock
-                                    className="absolute top-2 left-2 text-gray-500"
-                                    fontSize="small"
-                                  />
-                                )}
-                              </div>
-                            </div>
-                          )
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Games for this unit */}
-                  {getGamesByUnit(unit.id).length > 0 && (
-                    <div>
-                      <h3
-                        className={`font-bold mb-4 sm:mb-6 text-purple-400 text-center ${
-                          isMobile ? "text-xl" : "text-2xl"
-                        }`}
-                      >
-                        🎮 الألعاب التعليمية
-                      </h3>
-                      <div
-                        className={`grid gap-4 sm:gap-6 ${getGridClasses(
-                          "games"
-                        )}`}
-                      >
-                        {getGamesByUnit(unit.id).map((game, gameIndex) => {
-                          const isUnlocked = isUnitUnlocked(unit.id);
-
-                          return (
-                            <div
-                              key={gameIndex}
-                              className={`relative rounded-2xl overflow-hidden shadow-lg transform transition-all duration-500 cursor-pointer group ${
-                                isUnlocked
-                                  ? "hover:scale-[1.05] hover:shadow-2xl"
-                                  : "opacity-60 cursor-not-allowed"
-                              }`}
-                              onClick={() =>
-                                isUnlocked &&
-                                handleOpen(game.path, unit.id, game.gameId)
-                              }
-                            >
-                              {/* Enhanced Hover Effect - From Both Sides */}
-                              <div
-                                className={`absolute inset-y-0 left-0 w-0 group-hover:w-1/2 transition-all duration-700 bg-gradient-to-r ${game.gradientLeft}`}
-                              ></div>
-                              <div
-                                className={`absolute inset-y-0 right-0 w-0 group-hover:w-1/2 transition-all duration-700 bg-gradient-to-l ${game.gradientRight}`}
-                              ></div>
-
-                              {/* Lock Overlay */}
-                              {!isUnlocked && (
-                                <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-10">
-                                  <Lock className="text-white text-2xl sm:text-4xl" />
-                                </div>
-                              )}
-
-                              {/* Content */}
-                              <div className="relative z-10 flex flex-col items-center justify-center p-4 sm:p-6 text-center text-black min-h-[160px] sm:min-h-[200px]">
-                                <span
-                                  className={`mb-3 sm:mb-4 transform group-hover:scale-110 transition-transform duration-300 ${
-                                    isMobile ? "text-2xl" : "text-4xl"
-                                  }`}
-                                >
-                                  {game.icon}
-                                </span>
-                                <h4
-                                  className={`font-bold mb-2 drop-shadow ${
-                                    isMobile ? "text-base" : "text-lg"
-                                  }`}
-                                >
-                                  {game.title}
-                                </h4>
-                                <p
-                                  className={`mb-3 opacity-90 drop-shadow ${
-                                    isMobile ? "text-xs" : "text-sm"
-                                  }`}
-                                >
-                                  {game.description}
-                                </p>
-                                <div className="flex justify-between w-full text-xs mt-auto">
-                                  <span className="px-2 py-1 rounded-full bg-white/70 backdrop-blur-sm text-black">
-                                    {game.level}
-                                  </span>
-                                  <span className="px-2 py-1 rounded-full bg-yellow-500/70 backdrop-blur-sm text-black">
-                                    {game.points} نقطة
-                                  </span>
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                </div>
+                    تحتاج إكمال الوحدة {unit.id} أولاً
+                  </p>
+                )}
               </div>
             ))}
+          </div>
 
-            {/* Mobile Leaderboard */}
-            {isMobile && (
-              <Leaderboard
-                darkMode={darkMode}
-                userId={userData?.uid}
-                userScore={userScore}
-                isMobile={isMobile}
-              />
-            )}
+          {/* Leaderboard - Hide on mobile if too crowded */}
+          {!isMobile && (
+            <Leaderboard
+              darkMode={darkMode}
+              userId={userData?.uid}
+              userScore={userScore}
+              isMobile={isMobile}
+            />
+          )}
+        </div>
 
-            {/* Announcements */}
-            <div
-              className={`rounded-2xl p-4 sm:p-6 shadow-lg ${
-                darkMode
-                  ? "bg-gradient-to-br from-gray-800 to-purple-900/20 text-white"
-                  : "bg-gradient-to-br from-white to-purple-50 text-gray-800"
-              } border-2 ${
-                darkMode ? "border-purple-500/30" : "border-purple-200"
-              }`}
-            >
-              <h3
-                className={`font-bold mb-4 flex items-center ${
-                  isMobile ? "text-lg" : "text-xl"
-                }`}
+        {/* Right: Units, Lessons & Games */}
+        <div
+          className={`space-y-4 sm:space-y-6 ${
+            isDesktop ? "lg:col-span-3" : ""
+          }`}
+        >
+          {/* Units Section */}
+          {progressData.map((unit) => (
+            <div key={unit.id} className="space-y-4">
+              {/* Unit Header */}
+              <div
+                className={`rounded-2xl p-4 sm:p-6 shadow-lg ${
+                  darkMode ? "bg-gray-800/60" : "bg-white"
+                } ${!isUnitUnlocked(unit.id) ? "opacity-60" : ""}`}
               >
-                <Campaign className="mr-2 text-amber-400" />
-                <span className="bg-gradient-to-r from-amber-400 to-orange-400 bg-clip-text text-transparent">
-                  الإعلانات والأحداث
-                </span>
-              </h3>
-              <div className="space-y-3 sm:space-y-4">
-                {announcementsData.map((announcement, i) => (
-                  <div
-                    key={i}
-                    className={`relative p-3 sm:p-4 rounded-xl cursor-pointer overflow-hidden group border-l-4 transform transition-all duration-300 hover:scale-[1.02] ${
-                      darkMode
-                        ? "bg-gray-700/30 hover:bg-gray-700/50"
-                        : "bg-white hover:bg-gray-50"
-                    }`}
-                    style={{
-                      borderColor:
-                        announcement.color === "amber"
-                          ? darkMode
-                            ? "#FBBF24"
-                            : "#D97706"
-                          : announcement.color === "teal"
-                          ? darkMode
-                            ? "#14B8A6"
-                            : "#059669"
-                          : darkMode
-                          ? "#3B82F6"
-                          : "#2563EB",
-                    }}
-                  >
-                    <div className="relative z-10 flex items-center space-x-2 sm:space-x-3 space-x-reverse">
-                      <span className={isMobile ? "text-xl" : "text-2xl"}>
-                        {announcement.icon}
-                      </span>
-                      <div className="flex-1">
-                        <p
-                          className={`font-bold ${
-                            isMobile ? "text-base" : "text-lg"
-                          }`}
-                        >
-                          {announcement.title}
-                        </p>
-                        <p
-                          className={`${isMobile ? "text-xs" : "text-sm"} ${
-                            darkMode ? "text-gray-300" : "text-gray-600"
-                          }`}
-                        >
-                          {announcement.subtitle}
-                        </p>
-                      </div>
-                      <div
-                        className={`px-2 py-1 rounded-full font-bold ${
-                          isMobile ? "text-xs" : "text-sm"
-                        } ${
-                          darkMode
-                            ? "bg-purple-500/30 text-purple-300"
-                            : "bg-purple-100 text-purple-700"
-                        }`}
-                      >
-                        جديد
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* User Stats Card */}
-            <div
-              className={`rounded-2xl p-4 sm:p-6 shadow-lg ${
-                darkMode
-                  ? "bg-gradient-to-br from-gray-800 to-blue-900/20"
-                  : "bg-gradient-to-br from-white to-blue-50"
-              } border-2 ${
-                darkMode ? "border-blue-500/30" : "border-blue-200"
-              }`}
-            >
-              <h3
-                className={`font-bold mb-4 flex items-center ${
-                  isMobile ? "text-lg" : "text-xl"
-                }`}
-              >
-                <MilitaryTech className="mr-2 text-blue-400" />
-                إحصائياتي
-              </h3>
-              <div className={`grid gap-3 sm:gap-4 ${getGridClasses("stats")}`}>
                 <div
-                  className={`text-center p-3 sm:p-4 rounded-xl ${
-                    darkMode ? "bg-blue-500/20" : "bg-blue-100"
+                  className={`flex items-center justify-between mb-4 sm:mb-6 ${
+                    isMobile ? "flex-col gap-2 items-start" : ""
                   }`}
                 >
-                  <div
-                    className={`font-bold text-blue-400 ${
-                      isMobile ? "text-xl" : "text-2xl"
-                    }`}
-                  >
-                    {getTotalProgress()}%
-                  </div>
-                  <div className={isMobile ? "text-xs" : "text-sm"}>
-                    التقدم الكلي
-                  </div>
-                </div>
-                <div
-                  className={`text-center p-3 sm:p-4 rounded-xl ${
-                    darkMode ? "bg-green-500/20" : "bg-green-100"
-                  }`}
-                >
-                  <div
+                  <h2
                     className={`font-bold text-green-400 ${
                       isMobile ? "text-xl" : "text-2xl"
                     }`}
                   >
-                    {userScore}
-                  </div>
-                  <div className={isMobile ? "text-xs" : "text-sm"}>
-                    النقاط الكلية
-                  </div>
-                </div>
-                <div
-                  className={`text-center p-3 sm:p-4 rounded-xl ${
-                    darkMode ? "bg-purple-500/20" : "bg-purple-100"
-                  }`}
-                >
-                  <div
-                    className={`font-bold text-purple-400 ${
-                      isMobile ? "text-xl" : "text-2xl"
-                    }`}
-                  >
-                    {progressData.filter((unit) => unit.completed).length}
-                  </div>
-                  <div className={isMobile ? "text-xs" : "text-sm"}>
-                    الوحدات المكتملة
-                  </div>
-                </div>
-                <div
-                  className={`text-center p-3 sm:p-4 rounded-xl ${
-                    darkMode ? "bg-amber-500/20" : "bg-amber-100"
-                  }`}
-                >
-                  <div
-                    className={`font-bold text-amber-400 ${
-                      isMobile ? "text-xl" : "text-2xl"
-                    }`}
-                  >
-                    {progressData.reduce(
-                      (count, unit) => count + (unit.completedGames || 0),
-                      0
+                    {unit.label}
+                  </h2>
+                  <div className="flex items-center space-x-2">
+                    {!isUnitUnlocked(unit.id) && (
+                      <Lock className="text-red-500" />
                     )}
+                    <span
+                      className={`px-3 py-1 rounded-full bg-green-500/20 text-green-600 dark:text-green-400 ${
+                        isMobile ? "text-xs" : "text-sm"
+                      }`}
+                    >
+                      {unit.percentage}% مكتمل
+                    </span>
                   </div>
-                  <div className={isMobile ? "text-xs" : "text-sm"}>
-                    الألعاب المكتملة
+                </div>
+
+                {/* Lessons for this unit */}
+                {getLessonsByUnit(unit.id).length > 0 && (
+                  <div className="mb-6 sm:mb-8">
+                    <h3
+                      className={`font-bold mb-4 sm:mb-6 text-green-400 text-center ${
+                        isMobile ? "text-xl" : "text-2xl"
+                      }`}
+                    >
+                      🧩 الدروس التفاعلية
+                    </h3>
+                    <div
+                      className={`grid gap-4 sm:gap-6 ${getGridClasses(
+                        "lessons"
+                      )}`}
+                    >
+                      {getLessonsByUnit(unit.id).map((lesson, lessonIndex) => (
+                        <div
+                          key={lessonIndex}
+                          className={`relative rounded-2xl overflow-hidden shadow-lg transform transition-all duration-500 hover:scale-[1.05] cursor-pointer group ${
+                            !isUnitUnlocked(unit.id)
+                              ? "opacity-50 cursor-not-allowed"
+                              : ""
+                          }`}
+                          onClick={() =>
+                            isUnitUnlocked(unit.id) &&
+                            handleOpen(
+                              `lesson-${unit.id}-${lessonIndex}`,
+                              unit.id
+                            )
+                          }
+                        >
+                          {/* Animated Background Gradient */}
+                          <div
+                            className={`absolute inset-0 scale-x-0 group-hover:scale-x-100 origin-left transition-transform duration-700 bg-gradient-to-br ${lesson.gradient}`}
+                          ></div>
+
+                          {/* Content */}
+                          <div className="relative z-10 flex flex-col items-center justify-center p-4 sm:p-6 text-center min-h-[120px] sm:min-h-[140px]">
+                            <span className="text-2xl sm:text-3xl mb-2 sm:mb-3 transition-transform duration-500 group-hover:animate-bounce">
+                              {lesson.emoji}
+                            </span>
+                            <span
+                              className={`font-bold ${
+                                isMobile ? "text-base" : "text-lg"
+                              }`}
+                            >
+                              {lesson.title}
+                            </span>
+                            <p
+                              className={`mt-2 opacity-75 ${
+                                isMobile ? "text-xs" : "text-sm"
+                              }`}
+                            >
+                              {lesson.description}
+                            </p>
+                            {!isUnitUnlocked(unit.id) && (
+                              <Lock
+                                className="absolute top-2 left-2 text-gray-500"
+                                fontSize="small"
+                              />
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
+                )}
+
+                {/* Games for this unit */}
+                {getGamesByUnit(unit.id).length > 0 && (
+                  <div>
+                    <h3
+                      className={`font-bold mb-4 sm:mb-6 text-purple-400 text-center ${
+                        isMobile ? "text-xl" : "text-2xl"
+                      }`}
+                    >
+                      🎮 الألعاب التعليمية
+                    </h3>
+                    <div
+                      className={`grid gap-4 sm:gap-6 ${getGridClasses(
+                        "games"
+                      )}`}
+                    >
+                      {getGamesByUnit(unit.id).map((game, gameIndex) => {
+                        const isUnlocked = isUnitUnlocked(unit.id);
+
+                        return (
+                          <div
+                            key={gameIndex}
+                            className={`relative rounded-2xl overflow-hidden shadow-lg transform transition-all duration-500 cursor-pointer group ${
+                              isUnlocked
+                                ? "hover:scale-[1.05] hover:shadow-2xl"
+                                : "opacity-60 cursor-not-allowed"
+                            }`}
+                            onClick={() =>
+                              isUnlocked &&
+                              handleOpen(game.path, unit.id, game.gameId)
+                            }
+                          >
+                            {/* Enhanced Hover Effect - From Both Sides */}
+                            <div
+                              className={`absolute inset-y-0 left-0 w-0 group-hover:w-1/2 transition-all duration-700 bg-gradient-to-r ${game.gradientLeft}`}
+                            ></div>
+                            <div
+                              className={`absolute inset-y-0 right-0 w-0 group-hover:w-1/2 transition-all duration-700 bg-gradient-to-l ${game.gradientRight}`}
+                            ></div>
+
+                            {/* Lock Overlay */}
+                            {!isUnlocked && (
+                              <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-10">
+                                <Lock className="text-white text-2xl sm:text-4xl" />
+                              </div>
+                            )}
+
+                            {/* Content */}
+                            <div className="relative z-10 flex flex-col items-center justify-center p-4 sm:p-6 text-center text-black min-h-[160px] sm:min-h-[200px]">
+                              <span
+                                className={`mb-3 sm:mb-4 transform group-hover:scale-110 transition-transform duration-300 ${
+                                  isMobile ? "text-2xl" : "text-4xl"
+                                }`}
+                              >
+                                {game.icon}
+                              </span>
+                              <h4
+                                className={`font-bold mb-2 drop-shadow ${
+                                  isMobile ? "text-base" : "text-lg"
+                                }`}
+                              >
+                                {game.title}
+                              </h4>
+                              <p
+                                className={`mb-3 opacity-90 drop-shadow ${
+                                  isMobile ? "text-xs" : "text-sm"
+                                }`}
+                              >
+                                {game.description}
+                              </p>
+                              <div className="flex justify-between w-full text-xs mt-auto">
+                                <span className="px-2 py-1 rounded-full bg-white/70 backdrop-blur-sm text-black">
+                                  {game.level}
+                                </span>
+                                <span className="px-2 py-1 rounded-full bg-yellow-500/70 backdrop-blur-sm text-black">
+                                  {game.points} نقطة
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+
+          {/* Mobile Leaderboard */}
+          {isMobile && (
+            <Leaderboard
+              darkMode={darkMode}
+              userId={userData?.uid}
+              userScore={userScore}
+              isMobile={isMobile}
+            />
+          )}
+
+          {/* Announcements */}
+          <div
+            className={`rounded-2xl p-4 sm:p-6 shadow-lg ${
+              darkMode
+                ? "bg-gradient-to-br from-gray-800 to-purple-900/20 text-white"
+                : "bg-gradient-to-br from-white to-purple-50 text-gray-800"
+            } border-2 ${
+              darkMode ? "border-purple-500/30" : "border-purple-200"
+            }`}
+          >
+            <h3
+              className={`font-bold mb-4 flex items-center ${
+                isMobile ? "text-lg" : "text-xl"
+              }`}
+            >
+              <Campaign className="mr-2 text-amber-400" />
+              <span className="bg-gradient-to-r from-amber-400 to-orange-400 bg-clip-text text-transparent">
+                الإعلانات والأحداث
+              </span>
+            </h3>
+            <div className="space-y-3 sm:space-y-4">
+              {announcementsData.map((announcement, i) => (
+                <div
+                  key={i}
+                  className={`relative p-3 sm:p-4 rounded-xl cursor-pointer overflow-hidden group border-l-4 transform transition-all duration-300 hover:scale-[1.02] ${
+                    darkMode
+                      ? "bg-gray-700/30 hover:bg-gray-700/50"
+                      : "bg-white hover:bg-gray-50"
+                  }`}
+                  style={{
+                    borderColor:
+                      announcement.color === "amber"
+                        ? darkMode
+                          ? "#FBBF24"
+                          : "#D97706"
+                        : announcement.color === "teal"
+                        ? darkMode
+                          ? "#14B8A6"
+                          : "#059669"
+                        : darkMode
+                        ? "#3B82F6"
+                        : "#2563EB",
+                  }}
+                >
+                  <div className="relative z-10 flex items-center space-x-2 sm:space-x-3 space-x-reverse">
+                    <span className={isMobile ? "text-xl" : "text-2xl"}>
+                      {announcement.icon}
+                    </span>
+                    <div className="flex-1">
+                      <p
+                        className={`font-bold ${
+                          isMobile ? "text-base" : "text-lg"
+                        }`}
+                      >
+                        {announcement.title}
+                      </p>
+                      <p
+                        className={`${isMobile ? "text-xs" : "text-sm"} ${
+                          darkMode ? "text-gray-300" : "text-gray-600"
+                        }`}
+                      >
+                        {announcement.subtitle}
+                      </p>
+                    </div>
+                    <div
+                      className={`px-2 py-1 rounded-full font-bold ${
+                        isMobile ? "text-xs" : "text-sm"
+                      } ${
+                        darkMode
+                          ? "bg-purple-500/30 text-purple-300"
+                          : "bg-purple-100 text-purple-700"
+                      }`}
+                    >
+                      جديد
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* User Stats Card */}
+          <div
+            className={`rounded-2xl p-4 sm:p-6 shadow-lg ${
+              darkMode
+                ? "bg-gradient-to-br from-gray-800 to-blue-900/20"
+                : "bg-gradient-to-br from-white to-blue-50"
+            } border-2 ${darkMode ? "border-blue-500/30" : "border-blue-200"}`}
+          >
+            <h3
+              className={`font-bold mb-4 flex items-center ${
+                isMobile ? "text-lg" : "text-xl"
+              }`}
+            >
+              <MilitaryTech className="mr-2 text-blue-400" />
+              إحصائياتي
+            </h3>
+            <div className={`grid gap-3 sm:gap-4 ${getGridClasses("stats")}`}>
+              <div
+                className={`text-center p-3 sm:p-4 rounded-xl ${
+                  darkMode ? "bg-blue-500/20" : "bg-blue-100"
+                }`}
+              >
+                <div
+                  className={`font-bold text-blue-400 ${
+                    isMobile ? "text-xl" : "text-2xl"
+                  }`}
+                >
+                  {getTotalProgress()}%
+                </div>
+                <div className={isMobile ? "text-xs" : "text-sm"}>
+                  التقدم الكلي
+                </div>
+              </div>
+              <div
+                className={`text-center p-3 sm:p-4 rounded-xl ${
+                  darkMode ? "bg-green-500/20" : "bg-green-100"
+                }`}
+              >
+                <div
+                  className={`font-bold text-green-400 ${
+                    isMobile ? "text-xl" : "text-2xl"
+                  }`}
+                >
+                  {userScore}
+                </div>
+                <div className={isMobile ? "text-xs" : "text-sm"}>
+                  النقاط الكلية
+                </div>
+              </div>
+              <div
+                className={`text-center p-3 sm:p-4 rounded-xl ${
+                  darkMode ? "bg-purple-500/20" : "bg-purple-100"
+                }`}
+              >
+                <div
+                  className={`font-bold text-purple-400 ${
+                    isMobile ? "text-xl" : "text-2xl"
+                  }`}
+                >
+                  {progressData.filter((unit) => unit.completed).length}
+                </div>
+                <div className={isMobile ? "text-xs" : "text-sm"}>
+                  الوحدات المكتملة
+                </div>
+              </div>
+              <div
+                className={`text-center p-3 sm:p-4 rounded-xl ${
+                  darkMode ? "bg-amber-500/20" : "bg-amber-100"
+                }`}
+              >
+                <div
+                  className={`font-bold text-amber-400 ${
+                    isMobile ? "text-xl" : "text-2xl"
+                  }`}
+                >
+                  {progressData.reduce(
+                    (count, unit) => count + (unit.completedGames || 0),
+                    0
+                  )}
+                </div>
+                <div className={isMobile ? "text-xs" : "text-sm"}>
+                  الألعاب المكتملة
                 </div>
               </div>
             </div>
           </div>
         </div>
-      )}
+      </div>
 
       {/* Footer */}
       <footer

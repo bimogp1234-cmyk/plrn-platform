@@ -10,6 +10,7 @@ import NotFoundPage from "./components/NotFound/NotFoundPage";
 import DragDrop from "./components/Games/DragDrop/DragDrop";
 import Memorygame from "./components/Games/MemoryGame/Memorygame";
 import MessingLines from "./components/Games/MessingLines/MessingLines";
+import FPSGame from "./components/Games/RealisticArena/FPSGame";
 import MainComDep from "./components/Departments/ComputerDep/MainComDep";
 import PhysicDep from "./components/Departments/PhysicsDep/PhysicDep";
 import MathDep from "./components/Departments/MathDep/MathDep";
@@ -43,6 +44,7 @@ export default function App() {
             <Route path="/dragDrop" element={<DragDrop />} />
             <Route path="/messinglines" element={<MessingLines />} />
             <Route path="/memorycard" element={<Memorygame />} />
+            <Route path="/realisticarena" element={<FPSGame />} />
           </Routes>
         </Router>
       </AuthProvider>
