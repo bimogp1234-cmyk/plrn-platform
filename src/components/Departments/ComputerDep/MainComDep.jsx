@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+// MainComDep.jsx - FIXED NO REFRESH VERSION
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Avatar, Button, useMediaQuery, useTheme } from "@mui/material";
 import {
@@ -17,12 +18,12 @@ import {
 import Leaderboard from "./../LeaderboardComp/LeaderBoard";
 import {
   doc,
+  setDoc,
   getDoc,
   onSnapshot,
+  serverTimestamp,
   collection,
   getDocs,
-  setDoc,
-  serverTimestamp,
 } from "firebase/firestore";
 import { db } from "./../../../FireBaseDatabase/firebase";
 
@@ -31,10 +32,12 @@ export default function MainComDep() {
   const navigate = useNavigate();
   const theme = useTheme();
 
+  // Responsive breakpoints
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
   const isTablet = useMediaQuery(theme.breakpoints.between("sm", "lg"));
   const isDesktop = useMediaQuery(theme.breakpoints.up("lg"));
 
+  // 🟩 Get user data from router or localStorage
   const { userData: passedUserData, darkMode } = location.state || {};
   const storedUserData = localStorage.getItem("userData");
   const userData =
@@ -50,247 +53,163 @@ export default function MainComDep() {
   const [userScore, setUserScore] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
 
-  const lessonsData = [
-    {
-      id: "intro-programming",
-      title: "مدخل إلى البرمجة",
-      unit: 0,
-      description: "تعرف على أساسيات البرمجة والمفاهيم الأساسية",
-      emoji: "💻",
-      gradient: "from-green-200 to-green-400",
-    },
-    {
-      id: "computer-components",
-      title: "المكونات المادية للحاسوب",
-      unit: 0,
-      description: "اكتشف مكونات الحاسوب ووظائفها",
-      emoji: "🖥️",
-      gradient: "from-blue-200 to-blue-400",
-    },
-    {
-      id: "algorithms-flowcharts",
-      title: "الخوارزميات والمخططات الانسيابية",
-      unit: 1,
-      description: "تعلم تصميم الخوارزميات والمخططات",
-      emoji: "📊",
-      gradient: "from-purple-200 to-purple-400",
-    },
-    {
-      id: "javascript-basics",
-      title: "برمجة بلغة جافا سكربت",
-      unit: 2,
-      description: "ابدأ رحلتك مع لغة جافا سكربت",
-      emoji: "📝",
-      gradient: "from-yellow-200 to-yellow-400",
-    },
-    {
-      id: "data-handling",
-      title: "التعامل مع البيانات",
-      unit: 3,
-      description: "إدارة وتخزين البيانات في البرامج",
-      emoji: "📂",
-      gradient: "from-red-200 to-red-400",
-    },
-  ];
+  // 🎯 Use refs to track previous values and prevent infinite loops
+  const previousProgressData = useRef(null);
+  const previousUnlockedUnits = useRef(null);
+  const previousUserScore = useRef(0);
+  const isInitialLoad = useRef(true);
 
-  const announcementsData = [
-    {
-      title: "مسابقة أفضل مشروع بلغة سكراتش!",
-      subtitle: "آخر موعد 1 نوفمبر.",
-      color: "amber",
-      icon: "🏆",
-    },
-    {
-      title: "ورشة عمل: حل المشكلات بالخوارزميات",
-      subtitle: "يوم الثلاثاء القادم.",
-      color: "teal",
-      icon: "🔧",
-    },
-    {
-      title: "تصفيات بطولة البرمجة السريعة",
-      subtitle: "ابدأ التدرب الآن!",
-      color: "blue",
-      icon: "⚡",
-    },
-  ];
+  // 🎯 Memoized data definitions to prevent re-renders
+  const { lessonsData, announcementsData, gamesData } = useMemo(
+    () => ({
+      lessonsData: [
+        {
+          id: "intro-programming",
+          title: "مدخل إلى البرمجة",
+          unit: 0,
+          description: "تعرف على أساسيات البرمجة والمفاهيم الأساسية",
+          emoji: "💻",
+          gradient: "from-green-200 to-green-400",
+        },
+        {
+          id: "computer-components",
+          title: "المكونات المادية للحاسوب",
+          unit: 0,
+          description: "اكتشف مكونات الحاسوب ووظائفها",
+          emoji: "🖥️",
+          gradient: "from-blue-200 to-blue-400",
+        },
+        {
+          id: "algorithms-flowcharts",
+          title: "الخوارزميات والمخططات الانسيابية",
+          unit: 1,
+          description: "تعلم تصميم الخوارزميات والمخططات",
+          emoji: "📊",
+          gradient: "from-purple-200 to-purple-400",
+        },
+        {
+          id: "javascript-basics",
+          title: "برمجة بلغة جافا سكربت",
+          unit: 2,
+          description: "ابدأ رحلتك مع لغة جافا سكربت",
+          emoji: "📝",
+          gradient: "from-yellow-200 to-yellow-400",
+        },
+        {
+          id: "data-handling",
+          title: "التعامل مع البيانات",
+          unit: 3,
+          description: "إدارة وتخزين البيانات في البرامج",
+          emoji: "📂",
+          gradient: "from-red-200 to-red-400",
+        },
+      ],
+      announcementsData: [
+        {
+          title: "مسابقة أفضل مشروع بلغة سكراتش!",
+          subtitle: "آخر موعد 1 نوفمبر.",
+          color: "amber",
+          icon: "🏆",
+        },
+        {
+          title: "ورشة عمل: حل المشكلات بالخوارزميات",
+          subtitle: "يوم الثلاثاء القادم.",
+          color: "teal",
+          icon: "🔧",
+        },
+        {
+          title: "تصفيات بطولة البرمجة السريعة",
+          subtitle: "ابدأ التدرب الآن!",
+          color: "blue",
+          icon: "⚡",
+        },
+      ],
+      gamesData: [
+        {
+          path: "dragDrop",
+          title: "لعبة المخطط الانسيابي",
+          unit: 0,
+          gameId: "dragDrop",
+          description: "اختبر ذاكرتك مع مصطلحات البرمجة",
+          level: "سهل",
+          levelColor: "green",
+          icon: <BugReport />,
+          points: 100,
+          gradientLeft: "from-green-400 to-teal-600",
+          gradientRight: "from-teal-600 to-green-400",
+        },
+        {
+          path: "hangman",
+          title: "لعبة الرجل المشنوق",
+          unit: 0,
+          gameId: "hangman",
+          description: "احزر كلمات البرمجة قبل فوات الأوان",
+          level: "متوسط",
+          levelColor: "yellow",
+          icon: <BugReport />,
+          points: 100,
+          gradientLeft: "from-yellow-400 to-amber-600",
+          gradientRight: "from-amber-600 to-yellow-400",
+        },
+        {
+          path: "flowchartgame",
+          title: "مغامرة الخوارزميات",
+          unit: 1,
+          gameId: "flowchartgame",
+          description: "ارسم المسار الصحيح للخوارزمية",
+          level: "متوسط",
+          levelColor: "yellow",
+          icon: <SportsEsports />,
+          points: 100,
+          gradientLeft: "from-purple-400 to-pink-600",
+          gradientRight: "from-pink-600 to-purple-400",
+        },
+        {
+          path: "algorithm-shapes-game",
+          title: "لعبة أشكال الخوارزميات",
+          unit: 1,
+          gameId: "algorithm-shapes",
+          description: "رتب أشكال الخوارزميات في التسلسل الصحيح",
+          level: "متوسط",
+          levelColor: "yellow",
+          icon: <Code />,
+          points: 100,
+          gradientLeft: "from-indigo-400 to-purple-600",
+          gradientRight: "from-purple-600 to-indigo-400",
+        },
+        {
+          path: "compiler-game",
+          title: "رحلة المترجم",
+          unit: 2,
+          gameId: "compiler-journey",
+          description: "افهم كيفية عمل المترجم البرمجي",
+          level: "صعب",
+          levelColor: "red",
+          icon: <Code />,
+          points: 100,
+          gradientLeft: "from-red-400 to-rose-600",
+          gradientRight: "from-rose-600 to-red-400",
+        },
+        {
+          path: "scratch-lab",
+          title: "مختبر سكراتش",
+          unit: 3,
+          gameId: "scratch-lab",
+          description: "ابن مشاريعك الأولى بلغة سكراتش",
+          level: "سهل",
+          levelColor: "green",
+          icon: <School />,
+          points: 100,
+          gradientLeft: "from-blue-400 to-cyan-600",
+          gradientRight: "from-cyan-600 to-blue-400",
+        },
+      ],
+    }),
+    []
+  );
 
-  const gamesData = [
-    {
-      path: "dragDrop",
-      title: "لعبة المخطط الانسيابي",
-      unit: 0,
-      gameId: "dragDrop",
-      description: "اختبر ذاكرتك مع مصطلحات البرمجة",
-      level: "سهل",
-      levelColor: "green",
-      icon: <BugReport />,
-      points: 100,
-      gradientLeft: "from-green-400 to-teal-600",
-      gradientRight: "from-teal-600 to-green-400",
-    },
-    {
-      path: "hangman",
-      title: "لعبة الرجل المشنوق",
-      unit: 0,
-      gameId: "hangman",
-      description: "احزر كلمات البرمجة قبل فوات الأوان",
-      level: "متوسط",
-      levelColor: "yellow",
-      icon: <BugReport />,
-      points: 100,
-      gradientLeft: "from-yellow-400 to-amber-600",
-      gradientRight: "from-amber-600 to-yellow-400",
-    },
-    {
-      path: "flowchartgame",
-      title: "مغامرة الخوارزميات",
-      unit: 1,
-      gameId: "flowchartgame",
-      description: "ارسم المسار الصحيح للخوارزمية",
-      level: "متوسط",
-      levelColor: "yellow",
-      icon: <SportsEsports />,
-      points: 100,
-      gradientLeft: "from-purple-400 to-pink-600",
-      gradientRight: "from-pink-600 to-purple-400",
-    },
-    {
-      path: "algorithm-shapes-game",
-      title: "لعبة أشكال الخوارزميات",
-      unit: 1,
-      gameId: "algorithm-shapes",
-      description: "رتب أشكال الخوارزميات في التسلسل الصحيح",
-      level: "متوسط",
-      levelColor: "yellow",
-      icon: <Code />,
-      points: 100,
-      gradientLeft: "from-indigo-400 to-purple-600",
-      gradientRight: "from-purple-600 to-indigo-400",
-    },
-    {
-      path: "compiler-game",
-      title: "رحلة المترجم",
-      unit: 2,
-      gameId: "compiler-journey",
-      description: "افهم كيفية عمل المترجم البرمجي",
-      level: "صعب",
-      levelColor: "red",
-      icon: <Code />,
-      points: 100,
-      gradientLeft: "from-red-400 to-rose-600",
-      gradientRight: "from-rose-600 to-red-400",
-    },
-    {
-      path: "scratch-lab",
-      title: "مختبر سكراتش",
-      unit: 3,
-      gameId: "scratch-lab",
-      description: "ابن مشاريعك الأولى بلغة سكراتش",
-      level: "سهل",
-      levelColor: "green",
-      icon: <School />,
-      points: 100,
-      gradientLeft: "from-blue-400 to-cyan-600",
-      gradientRight: "from-cyan-600 to-blue-400",
-    },
-  ];
-
-  const getGamesByUnit = (unitId) => {
-    return gamesData.filter((game) => game.unit === unitId);
-  };
-
-  const getLessonsByUnit = (unitId) => {
-    return lessonsData.filter((lesson) => lesson.unit === unitId);
-  };
-
-  const getGridClasses = (type) => {
-    switch (type) {
-      case "lessons":
-        return isMobile
-          ? "grid-cols-1"
-          : isTablet
-          ? "grid-cols-2"
-          : "grid-cols-3";
-      case "games":
-        return isMobile
-          ? "grid-cols-1"
-          : isTablet
-          ? "grid-cols-2"
-          : "grid-cols-3";
-      case "stats":
-        return isMobile ? "grid-cols-2" : "grid-cols-4";
-      default:
-        return "grid-cols-1";
-    }
-  };
-
-  const isUnitUnlocked = (unitId) => {
-    return unlockedUnits.includes(unitId);
-  };
-
-  const getTotalProgress = () => {
-    if (progressData.length === 0) return 0;
-    const totalPercentage = progressData.reduce(
-      (sum, unit) => sum + (unit.percentage || 0),
-      0
-    );
-    return Math.round(totalPercentage / progressData.length);
-  };
-
-  const calculateUnlockedUnits = (progressData) => {
-    const unlocked = [0];
-    progressData.forEach((unit, index) => {
-      if (index > 0 && progressData[index - 1]?.completed) {
-        unlocked.push(unit.id);
-      }
-    });
-    console.log("🔓 Unlocked units:", unlocked);
-    return unlocked;
-  };
-
-  const loadProgressFromFirebase = async () => {
-    if (!userData?.uid) {
-      console.log("❌ No user ID available");
-      return null;
-    }
-
-    try {
-      console.log("🔄 Loading progress from Firebase for user:", userData.uid);
-
-      const progressRef = doc(db, "users", userData.uid, "progress", "main");
-      const scoresRef = doc(db, "users", userData.uid, "scores", "overall");
-
-      const [progressSnap, scoresSnap] = await Promise.all([
-        getDoc(progressRef),
-        getDoc(scoresRef),
-      ]);
-
-      if (progressSnap.exists()) {
-        const progressData = progressSnap.data();
-        const scoresData = scoresSnap.exists() ? scoresSnap.data() : {};
-
-        console.log("✅ Loaded progress from Firebase:", progressData);
-
-        return {
-          progressData: progressData.progressData || getInitialProgressData(),
-          unlockedUnits: progressData.unlockedUnits || [0],
-          userScore: scoresData.totalScore || 0,
-        };
-      } else {
-        console.log("📝 No progress data found, initializing default");
-        return {
-          progressData: getInitialProgressData(),
-          unlockedUnits: [0],
-          userScore: 0,
-        };
-      }
-    } catch (error) {
-      console.error("❌ Error loading from Firestore:", error);
-      return null;
-    }
-  };
-
-  const getInitialProgressData = () => {
+  // 🎯 Memoized helper functions
+  const getInitialProgressData = useCallback(() => {
     return [
       {
         id: 0,
@@ -337,56 +256,377 @@ export default function MainComDep() {
         maxPossibleScore: 100,
       },
     ];
-  };
+  }, []);
 
-  const updateProgressData = async (gameData) => {
-    if (!userData?.uid) return;
+  const getGamesByUnit = useCallback(
+    (unitId) => {
+      return gamesData.filter((game) => game.unit === unitId);
+    },
+    [gamesData]
+  );
+
+  const getLessonsByUnit = useCallback(
+    (unitId) => {
+      return lessonsData.filter((lesson) => lesson.unit === unitId);
+    },
+    [lessonsData]
+  );
+
+  const getGridClasses = useCallback(
+    (type) => {
+      switch (type) {
+        case "lessons":
+          return isMobile
+            ? "grid-cols-1"
+            : isTablet
+            ? "grid-cols-2"
+            : "grid-cols-3";
+        case "games":
+          return isMobile
+            ? "grid-cols-1"
+            : isTablet
+            ? "grid-cols-2"
+            : "grid-cols-3";
+        case "stats":
+          return isMobile ? "grid-cols-2" : "grid-cols-4";
+        default:
+          return "grid-cols-1";
+      }
+    },
+    [isMobile, isTablet]
+  );
+
+  const isUnitUnlocked = useCallback(
+    (unitId) => {
+      return unlockedUnits.includes(unitId);
+    },
+    [unlockedUnits]
+  );
+
+  const getTotalProgress = useCallback(() => {
+    if (progressData.length === 0) return 0;
+    const totalPercentage = progressData.reduce(
+      (sum, unit) => sum + (unit.percentage || 0),
+      0
+    );
+    return Math.round(totalPercentage / progressData.length);
+  }, [progressData]);
+
+  // 🎯 Load individual game scores from Firebase
+  const loadIndividualGameScores = useCallback(async () => {
+    if (!userData?.uid) return {};
 
     try {
-      const { unitId, gameId, score: gameScore, completed } = gameData;
+      const scoresCollection = collection(db, "users", userData.uid, "scores");
+      const scoresSnapshot = await getDocs(scoresCollection);
+      const gameScores = {};
 
-      const progressRef = doc(db, "users", userData.uid, "progress", "main");
-      const progressSnap = await getDoc(progressRef);
+      scoresSnapshot.forEach((doc) => {
+        const data = doc.data();
+        gameScores[data.gameId] = {
+          score: data.score || 0,
+          completed: data.completed || false,
+          lastPlayed: data.lastPlayed,
+          unitId: data.unitId,
+        };
+      });
 
-      if (progressSnap.exists()) {
-        const currentProgress =
-          progressSnap.data().progressData || getInitialProgressData();
-        const updatedProgress = [...currentProgress];
+      console.log("🎮 Loaded individual game scores:", gameScores);
+      return gameScores;
+    } catch (error) {
+      console.error("❌ Error loading individual game scores:", error);
+      return {};
+    }
+  }, [userData?.uid]);
 
-        if (updatedProgress[unitId]) {
-          updatedProgress[unitId].totalScore += gameScore;
-          updatedProgress[unitId].completedGames += completed ? 1 : 0;
+  // 🎯 Calculate unit progress based on game scores
+  const calculateUnitProgress = useCallback(
+    (unit, gameScores) => {
+      const unitGames = gamesData.filter((game) => game.unit === unit.id);
+      let totalScore = 0;
+      let maxPossibleScore = 0;
+      let completedGames = 0;
 
-          const percentage = Math.min(
-            (updatedProgress[unitId].totalScore /
-              updatedProgress[unitId].maxPossibleScore) *
-              100,
-            100
-          );
-          updatedProgress[unitId].percentage = Math.round(percentage);
-          updatedProgress[unitId].completed = percentage >= 100;
+      unitGames.forEach((game) => {
+        const gameScore = gameScores[game.gameId]?.score || 0;
+        const gameMaxScore = game.points || 100;
+
+        totalScore += Math.min(gameScore, gameMaxScore);
+        maxPossibleScore += gameMaxScore;
+
+        if (gameScores[game.gameId]?.completed) {
+          completedGames++;
         }
+      });
 
-        const newUnlockedUnits = calculateUnlockedUnits(updatedProgress);
+      const percentage =
+        maxPossibleScore > 0
+          ? Math.min(100, Math.round((totalScore / maxPossibleScore) * 100))
+          : 0;
 
-        await setDoc(progressRef, {
-          progressData: updatedProgress,
-          unlockedUnits: newUnlockedUnits,
+      const completed = percentage >= 100;
+
+      return {
+        totalScore,
+        percentage,
+        completed,
+        completedGames,
+        maxPossibleScore,
+      };
+    },
+    [gamesData]
+  );
+
+  // 🎯 Calculate which units should be unlocked
+  const calculateUnlockedUnits = useCallback((progressData) => {
+    const unlocked = [0]; // Always unlock first unit
+
+    progressData.forEach((unit, index) => {
+      if (index > 0 && progressData[index - 1]?.completed) {
+        unlocked.push(unit.id);
+      }
+    });
+
+    console.log("🔓 Unlocked units:", unlocked);
+    return unlocked;
+  }, []);
+
+  // 🎯 Save progress to Firebase - OPTIMIZED: Only save when data actually changes
+  const saveProgressToFirebase = useCallback(async () => {
+    if (!userData?.uid) return;
+
+    // Check if data actually changed
+    const progressChanged =
+      JSON.stringify(previousProgressData.current) !==
+      JSON.stringify(progressData);
+    const scoreChanged = previousUserScore.current !== userScore;
+    const unitsChanged =
+      JSON.stringify(previousUnlockedUnits.current) !==
+      JSON.stringify(unlockedUnits);
+
+    if (!progressChanged && !scoreChanged && !unitsChanged) {
+      console.log("🔄 No changes detected, skipping Firebase save");
+      return;
+    }
+
+    try {
+      const userRef = doc(db, "users", userData.uid);
+      const progressRef = doc(db, "users", userData.uid, "progress", "main");
+      const scoresRef = doc(db, "users", userData.uid, "scores", "overall");
+      const leaderboardRef = doc(db, "leaderboard", userData.uid);
+
+      const totalProgress = getTotalProgress();
+      const completedGames = progressData.reduce(
+        (count, unit) => count + (unit.completedGames || 0),
+        0
+      );
+      const completedUnits = progressData.filter(
+        (unit) => unit.completed
+      ).length;
+
+      console.log("💾 Saving to Firebase:", {
+        totalScore: userScore,
+        totalProgress,
+        completedGames,
+        completedUnits,
+        unlockedUnits,
+      });
+
+      // Update user profile with scores
+      await setDoc(
+        userRef,
+        {
+          email: userData.email,
+          name: userData.fullName || userData.name,
+          photoURL: userData.photoURL,
+          totalScore: userScore,
+          totalProgress: totalProgress,
           lastUpdated: serverTimestamp(),
-        });
+        },
+        { merge: true }
+      );
 
-        setProgressData(updatedProgress);
-        setUnlockedUnits(newUnlockedUnits);
+      // Update progress data
+      await setDoc(
+        progressRef,
+        {
+          progressData: progressData,
+          unlockedUnits: unlockedUnits,
+          totalProgress: totalProgress,
+          lastUpdated: serverTimestamp(),
+        },
+        { merge: true }
+      );
 
-        console.log("✅ Progress updated successfully");
+      // Update overall scores
+      await setDoc(
+        scoresRef,
+        {
+          totalScore: userScore,
+          completedGames: completedGames,
+          completedUnits: completedUnits,
+          lastUpdated: serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      // Update public leaderboard entry
+      await setDoc(
+        leaderboardRef,
+        {
+          userId: userData.uid,
+          name: userData.fullName || userData.name,
+          photoURL: userData.photoURL,
+          totalScore: userScore,
+          completedGames: completedGames,
+          completedUnits: completedUnits,
+          lastUpdated: serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      console.log("✅ All progress saved to Firestore successfully");
+
+      // Update refs with current values
+      previousProgressData.current = [...progressData];
+      previousUserScore.current = userScore;
+      previousUnlockedUnits.current = [...unlockedUnits];
+    } catch (error) {
+      console.error("❌ Error saving to Firestore:", error);
+    }
+  }, [userData, progressData, userScore, unlockedUnits, getTotalProgress]);
+
+  // 🎯 Recalculate all progress from individual game scores
+  const recalculateAllProgress = useCallback(async () => {
+    try {
+      const gameScores = await loadIndividualGameScores();
+      const initialProgress = getInitialProgressData();
+
+      // Calculate progress for each unit
+      const updatedProgress = initialProgress.map((unit) => {
+        const unitProgress = calculateUnitProgress(unit, gameScores);
+
+        return {
+          ...unit,
+          percentage: unitProgress.percentage,
+          completed: unitProgress.completed,
+          totalScore: unitProgress.totalScore,
+          completedGames: unitProgress.completedGames,
+          maxPossibleScore: unitProgress.maxPossibleScore,
+        };
+      });
+
+      // Calculate total user score
+      const newTotalScore = updatedProgress.reduce(
+        (sum, unit) => sum + (unit.totalScore || 0),
+        0
+      );
+
+      console.log("💰 Recalculated total score:", newTotalScore);
+
+      // Update unlocked units
+      const newUnlockedUnits = calculateUnlockedUnits(updatedProgress);
+
+      // Update states
+      setProgressData(updatedProgress);
+      setUserScore(newTotalScore);
+      setUnlockedUnits(newUnlockedUnits);
+    } catch (error) {
+      console.error("❌ Error recalculating progress:", error);
+    }
+  }, [
+    loadIndividualGameScores,
+    getInitialProgressData,
+    calculateUnitProgress,
+    calculateUnlockedUnits,
+  ]);
+
+  // 🎯 Load from Firebase
+  const loadFirestoreProgress = useCallback(async () => {
+    if (!userData?.uid) return null;
+
+    try {
+      const progressRef = doc(db, "users", userData.uid, "progress", "main");
+      const scoresRef = doc(db, "users", userData.uid, "scores", "overall");
+
+      const [progressSnap, scoresSnap] = await Promise.all([
+        getDoc(progressRef),
+        getDoc(scoresRef),
+      ]);
+
+      if (progressSnap.exists() && scoresSnap.exists()) {
+        const progressData = progressSnap.data();
+        const scoresData = scoresSnap.data();
+
+        return {
+          progressData: progressData.progressData || [],
+          unlockedUnits: progressData.unlockedUnits || [0],
+          userScore: scoresData.totalScore || 0,
+        };
       }
     } catch (error) {
-      console.error("❌ Error updating progress:", error);
+      console.error("Error loading from Firestore:", error);
     }
-  };
+    return null;
+  }, [userData?.uid]);
 
+  // 🎯 Update game progress and scores - OPTIMIZED
+  const updateGameProgress = useCallback(
+    async (unitId, gameId, gameData) => {
+      if (unitId === null || gameId === null) return;
+
+      const score =
+        gameData?.score || gameData?.finalScore || gameData?.points || 0;
+      const currentLevel = gameData?.currentLevel || gameData?.level || 0;
+      const progressPercentage =
+        gameData?.progressPercentage || gameData?.percentage || 0;
+      const completed = gameData?.completed || false;
+
+      console.log("🔄 Updating game progress:", {
+        unitId,
+        gameId,
+        score,
+        completed,
+        currentLevel,
+        progressPercentage,
+      });
+
+      try {
+        // Write individual score doc to Firestore
+        if (userData?.uid) {
+          const scoreRef = doc(db, "users", userData.uid, "scores", gameId);
+          await setDoc(
+            scoreRef,
+            {
+              gameId,
+              unitId,
+              score,
+              points: score,
+              completed: completed || false,
+              currentLevel: currentLevel,
+              progressPercentage: progressPercentage,
+              lastPlayed: serverTimestamp(),
+            },
+            { merge: true }
+          );
+          console.log("✅ Individual score saved for", gameId);
+        }
+
+        // Only recalculate if there's actual progress
+        if (score > 0 || completed) {
+          await recalculateAllProgress();
+        }
+      } catch (error) {
+        console.error("❌ Error in updateGameProgress:", error);
+      }
+    },
+    [userData?.uid, recalculateAllProgress]
+  );
+
+  // 🎯 Game completion handler - OPTIMIZED
   useEffect(() => {
     const handleGameCompletion = (event) => {
+      // Check if this is a game completion message
       if (event.data && event.data.type === "GAME_COMPLETE") {
         const { unitId, gameId, gameData } = event.data;
         console.log("🎯 Game completion processed:", {
@@ -395,13 +635,14 @@ export default function MainComDep() {
           gameData,
         });
 
-        updateProgressData({ unitId, gameId, ...gameData });
-        loadProgressData();
+        updateGameProgress(unitId, gameId, gameData);
       }
     };
 
+    // Listen for messages from child games
     window.addEventListener("message", handleGameCompletion);
 
+    // Also check for completion data in location state (when navigating back)
     if (location.state?.gameCompletion) {
       const { unitId, gameId, gameData } = location.state;
       console.log("🔄 Game completion from navigation:", {
@@ -409,54 +650,119 @@ export default function MainComDep() {
         gameId,
         gameData,
       });
-      updateProgressData({ unitId, gameId, ...gameData });
-      loadProgressData();
+      updateGameProgress(unitId, gameId, gameData);
+
+      // Clear the state to avoid processing again
       navigate(location.pathname, { replace: true, state: {} });
     }
 
     return () => window.removeEventListener("message", handleGameCompletion);
-  }, [location.state, navigate]);
+  }, [location.state, navigate, updateGameProgress]);
 
-  const loadProgressData = async () => {
-    setIsLoading(true);
-    console.log("🔄 Loading progress data...");
+  // Initialize progress system - OPTIMIZED
+  useEffect(() => {
+    const initializeProgress = async () => {
+      if (!userData?.uid) {
+        setIsLoading(false);
+        return;
+      }
 
-    try {
-      const firestoreProgress = await loadProgressFromFirebase();
+      setIsLoading(true);
+      console.log("🔄 Initializing progress system...");
 
-      if (firestoreProgress) {
-        console.log("✅ Using Firestore data");
-        setProgressData(firestoreProgress.progressData);
-        setUnlockedUnits(firestoreProgress.unlockedUnits);
-        setUserScore(firestoreProgress.userScore);
-      } else {
-        console.log("🔄 Using default progress data");
+      try {
+        // Try to load from Firebase first
+        const firestoreProgress = await loadFirestoreProgress();
+
+        if (firestoreProgress) {
+          console.log("✅ Using Firestore data");
+          setProgressData(firestoreProgress.progressData);
+          setUnlockedUnits(firestoreProgress.unlockedUnits);
+          setUserScore(firestoreProgress.userScore);
+
+          // Initialize refs
+          previousProgressData.current = [...firestoreProgress.progressData];
+          previousUnlockedUnits.current = [...firestoreProgress.unlockedUnits];
+          previousUserScore.current = firestoreProgress.userScore;
+        } else {
+          console.log("🔄 Calculating from individual game scores");
+          // Recalculate everything from individual game scores
+          await recalculateAllProgress();
+        }
+      } catch (error) {
+        console.error("❌ Error initializing progress:", error);
+        // Fallback to initial progress
         const initialProgress = getInitialProgressData();
         setProgressData(initialProgress);
         setUnlockedUnits([0]);
         setUserScore(0);
+
+        // Initialize refs
+        previousProgressData.current = [...initialProgress];
+        previousUnlockedUnits.current = [0];
+        previousUserScore.current = 0;
       }
-    } catch (error) {
-      console.error("❌ Error loading progress:", error);
-      const initialProgress = getInitialProgressData();
-      setProgressData(initialProgress);
-      setUnlockedUnits([0]);
-      setUserScore(0);
-    }
 
-    setIsLoading(false);
-    setTimeout(() => setShowContent(true), 500);
-  };
+      setIsLoading(false);
+      setTimeout(() => setShowContent(true), 500);
+      isInitialLoad.current = false;
+    };
 
+    initializeProgress();
+  }, [userData?.uid]);
+
+  // 🎯 Save to Firebase when data changes - OPTIMIZED
+  useEffect(() => {
+    if (isInitialLoad.current || !userData?.uid || isLoading) return;
+
+    console.log("🔄 Data changed, saving to Firebase...");
+    saveProgressToFirebase();
+  }, [
+    progressData,
+    userScore,
+    unlockedUnits,
+    userData?.uid,
+    isLoading,
+    saveProgressToFirebase,
+  ]);
+
+  // 🎯 REAL-TIME Firestore listeners - OPTIMIZED: Only update when necessary
   useEffect(() => {
     if (!userData?.uid) return;
 
     console.log(
-      "👂 Setting up real-time score listener for user:",
+      "👂 Setting up optimized real-time listeners for user:",
       userData.uid
     );
 
+    const progressRef = doc(db, "users", userData.uid, "progress", "main");
     const overallRef = doc(db, "users", userData.uid, "scores", "overall");
+
+    const unsubProgress = onSnapshot(
+      progressRef,
+      (snap) => {
+        if (snap.exists()) {
+          const data = snap.data();
+          console.log("📊 Real-time progress update:", data);
+
+          // Only update if data actually changed
+          setProgressData((prev) => {
+            if (JSON.stringify(prev) !== JSON.stringify(data.progressData)) {
+              return data.progressData;
+            }
+            return prev;
+          });
+
+          setUnlockedUnits((prev) => {
+            if (JSON.stringify(prev) !== JSON.stringify(data.unlockedUnits)) {
+              return data.unlockedUnits;
+            }
+            return prev;
+          });
+        }
+      },
+      (err) => console.error("Progress snapshot error:", err)
+    );
 
     const unsubOverall = onSnapshot(
       overallRef,
@@ -464,6 +770,8 @@ export default function MainComDep() {
         if (snap.exists()) {
           const data = snap.data();
           const newScore = data.totalScore || 0;
+
+          // Only update if score actually changed
           setUserScore((prev) => {
             if (prev !== newScore) {
               console.log("💰 Real-time score update:", newScore);
@@ -477,41 +785,43 @@ export default function MainComDep() {
     );
 
     return () => {
+      unsubProgress();
       unsubOverall();
     };
   }, [userData?.uid]);
 
-  useEffect(() => {
-    loadProgressData();
-  }, [userData?.uid]);
-
-  const showToast = (message, type) => {
+  const showToast = useCallback((message, type) => {
     console.log(`${type}: ${message}`);
+    // You can replace this with your actual toast system
     if (typeof window !== "undefined" && window.alert) {
       window.alert(`${type}: ${message}`);
     }
-  };
+  }, []);
 
-  const handleOpen = (path, unitId = null, gameId = null) => {
-    if (!path) {
-      showToast("المسار غير متاح حالياً.", "info");
-      return;
-    }
+  // 🎯 Handle navigation
+  const handleOpen = useCallback(
+    (path, unitId = null, gameId = null) => {
+      if (!path) {
+        showToast("المسار غير متاح حالياً.", "info");
+        return;
+      }
 
-    if (unitId !== null && !unlockedUnits.includes(unitId)) {
-      showToast("يجب إكمال الوحدة السابقة أولاً!", "warning");
-      return;
-    }
+      if (unitId !== null && !unlockedUnits.includes(unitId)) {
+        showToast("يجب إكمال الوحدة السابقة أولاً!", "warning");
+        return;
+      }
 
-    const gameState = {
-      userData: userData,
-      darkMode: darkMode,
-      unitId: unitId,
-      gameId: gameId,
-    };
+      const gameState = {
+        userData: userData,
+        darkMode: darkMode,
+        unitId: unitId,
+        gameId: gameId,
+      };
 
-    navigate(`/${path}`, { state: gameState });
-  };
+      navigate(`/${path}`, { state: gameState });
+    },
+    [showToast, unlockedUnits, userData, darkMode, navigate]
+  );
 
   if (isLoading) {
     return (
@@ -570,7 +880,10 @@ export default function MainComDep() {
           <Avatar
             src={photo}
             alt={name}
-            sx={{ width: isMobile ? 32 : 40, height: isMobile ? 32 : 40 }}
+            sx={{
+              width: isMobile ? 32 : 40,
+              height: isMobile ? 32 : 40,
+            }}
           />
         </div>
       </div>
@@ -803,9 +1116,12 @@ export default function MainComDep() {
                                 )
                               }
                             >
+                              {/* Animated Background Gradient */}
                               <div
                                 className={`absolute inset-0 scale-x-0 group-hover:scale-x-100 origin-left transition-transform duration-700 bg-gradient-to-br ${lesson.gradient}`}
                               ></div>
+
+                              {/* Content */}
                               <div className="relative z-10 flex flex-col items-center justify-center p-4 sm:p-6 text-center min-h-[120px] sm:min-h-[140px]">
                                 <span className="text-2xl sm:text-3xl mb-2 sm:mb-3 transition-transform duration-500 group-hover:animate-bounce">
                                   {lesson.emoji}
@@ -855,6 +1171,7 @@ export default function MainComDep() {
                       >
                         {getGamesByUnit(unit.id).map((game, gameIndex) => {
                           const isUnlocked = isUnitUnlocked(unit.id);
+
                           return (
                             <div
                               key={gameIndex}
@@ -868,17 +1185,22 @@ export default function MainComDep() {
                                 handleOpen(game.path, unit.id, game.gameId)
                               }
                             >
+                              {/* Enhanced Hover Effect - From Both Sides */}
                               <div
                                 className={`absolute inset-y-0 left-0 w-0 group-hover:w-1/2 transition-all duration-700 bg-gradient-to-r ${game.gradientLeft}`}
                               ></div>
                               <div
                                 className={`absolute inset-y-0 right-0 w-0 group-hover:w-1/2 transition-all duration-700 bg-gradient-to-l ${game.gradientRight}`}
                               ></div>
+
+                              {/* Lock Overlay */}
                               {!isUnlocked && (
                                 <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-10">
                                   <Lock className="text-white text-2xl sm:text-4xl" />
                                 </div>
                               )}
+
+                              {/* Content */}
                               <div className="relative z-10 flex flex-col items-center justify-center p-4 sm:p-6 text-center text-black min-h-[160px] sm:min-h-[200px]">
                                 <span
                                   className={`mb-3 sm:mb-4 transform group-hover:scale-110 transition-transform duration-300 ${
@@ -1118,6 +1440,7 @@ export default function MainComDep() {
         {`
           @keyframes fadeIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
           .animate-fadeIn { animation: fadeIn 0.7s ease forwards; }
+
           @keyframes bounce { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
           .animate-bounce { animation: bounce 0.6s infinite; }
         `}

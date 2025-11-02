@@ -4,9 +4,12 @@ import "@fontsource/tajawal";
 import { AppBar, Toolbar, IconButton, Button } from "@mui/material";
 import { Brightness4, VolumeUp, VolumeOff } from "@mui/icons-material";
 import { useLocation, useNavigate } from "react-router-dom";
+
+// Firestore imports
 import { doc, setDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "./../../../FireBaseDatabase/firebase";
 
+// الأصوات
 const correctSound = new Audio("/sound/correct.mp3");
 const wrongSound = new Audio("/sound/lose1.mp3");
 const typingSound = new Audio("/sound/typing.mp3");
@@ -14,6 +17,7 @@ const timeupSound = new Audio("/sound/lose2.mp3");
 const musicRelaxing = new Audio("/sound/music-relaxing.mp3");
 musicRelaxing.loop = true;
 
+// الأسئلة
 const QUESTIONS = [
   {
     id: "q1",
@@ -87,6 +91,7 @@ const QUESTIONS = [
   },
 ];
 
+// Card
 function Card({ children, className, darkMode }) {
   return (
     <div
@@ -99,6 +104,7 @@ function Card({ children, className, darkMode }) {
   );
 }
 
+// Timer
 function Timer({ seconds, running, onExpire, resetTrigger, darkMode }) {
   const [t, setT] = useState(seconds);
 
@@ -134,6 +140,7 @@ function Timer({ seconds, running, onExpire, resetTrigger, darkMode }) {
   );
 }
 
+// FloatingButton
 function FloatingButton({ label, onClick, selected, darkMode }) {
   const controls = useAnimation();
   useEffect(() => {
@@ -171,6 +178,7 @@ function FloatingButton({ label, onClick, selected, darkMode }) {
   );
 }
 
+// MCQLine
 function MCQLine({ question, onAnswer, darkMode, resetTrigger }) {
   const [answers, setAnswers] = useState(
     Array(question.blanks.length).fill("")
@@ -322,6 +330,7 @@ function MCQLine({ question, onAnswer, darkMode, resetTrigger }) {
   );
 }
 
+// اللعبة الرئيسية
 export default function MissingLinesGame() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -338,6 +347,7 @@ export default function MissingLinesGame() {
 
   const TOTAL = QUESTIONS.length;
 
+  // 🎯 Enhanced progress reporting
   const reportProgress = async (isCompleted = false, finalScore = null) => {
     const currentScore = finalScore !== null ? finalScore : score;
     const totalQuestions = QUESTIONS.length;
@@ -355,12 +365,14 @@ export default function MissingLinesGame() {
 
     console.log("📊 Reporting progress:", gameData);
 
+    // 1. Save to localStorage
     try {
       localStorage.setItem(`game_progress_${gameId}`, JSON.stringify(gameData));
     } catch (err) {
       console.warn("localStorage save failed", err);
     }
 
+    // 2. Save to Firebase
     if (userData?.uid && gameId) {
       try {
         const scoreDocRef = doc(db, "users", userData.uid, "scores", gameId);
@@ -384,6 +396,7 @@ export default function MissingLinesGame() {
       }
     }
 
+    // 3. Send message to parent (MainComDep)
     const messageData = {
       type: "GAME_COMPLETE",
       unitId: unitId,
@@ -391,17 +404,24 @@ export default function MissingLinesGame() {
       gameData: gameData,
     };
 
+    console.log("📨 Sending message to parent:", messageData);
+
+    // Try multiple ways to send the message
     if (window.parent !== window) {
       window.parent.postMessage(messageData, "*");
     }
+
     if (window.opener) {
       window.opener.postMessage(messageData, "*");
     }
+
+    // Also try to send to the same window (for testing)
     window.postMessage(messageData, "*");
 
     return gameData;
   };
 
+  // Save progress when level or score changes
   useEffect(() => {
     if (index > 0 || score > 0) {
       reportProgress(false).catch(console.error);
@@ -430,6 +450,7 @@ export default function MissingLinesGame() {
         setRunning(true);
       } else {
         setFinished(true);
+        // Report final completion
         reportProgress(true).catch(console.error);
       }
     }, 900);
@@ -441,7 +462,9 @@ export default function MissingLinesGame() {
   }
 
   const exitGame = () => {
+    // Save current progress before exiting
     reportProgress(false).catch(console.error);
+
     navigate(-1, {
       state: {
         gameCompletion: true,

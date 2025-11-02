@@ -11,9 +11,12 @@ import { DndProvider, useDrag, useDrop } from "react-dnd";
 import { HTML5Backend } from "react-dnd-html5-backend";
 import { useLocation, useNavigate } from "react-router-dom";
 import "@fontsource/tajawal";
+
+// Firestore imports
 import { doc, setDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "./../../../FireBaseDatabase/firebase";
 
+// الأصوات
 const correctSound = new Audio("/sound/correct.mp3");
 const wrongSound = new Audio("/sound/lose1.mp3");
 const musicRelaxing = new Audio("/sound/music-relaxing.mp3");
@@ -21,6 +24,7 @@ musicRelaxing.loop = true;
 
 const ItemTypes = { SHAPE: "shape" };
 
+// جميع الأشكال الممكنة
 const ALL_SHAPES = [
   { id: "start", label: "البداية", color: "#43A047", type: "start" },
   { id: "input", label: "ادخل الطول", color: "#2196F3", type: "input" },
@@ -51,6 +55,7 @@ const ALL_SHAPES = [
   { id: "output4", label: "اطبع العدد", color: "#03A9F4", type: "output4" },
 ];
 
+// الأسئلة
 const QUESTIONS = [
   {
     id: 1,
@@ -92,6 +97,7 @@ const QUESTIONS = [
   },
 ];
 
+// -------- Shape component --------
 function Shape({ shape }) {
   const [{ isDragging }, drag] = useDrag(
     () => ({
@@ -213,6 +219,7 @@ function Shape({ shape }) {
   );
 }
 
+// -------- Slot component --------
 function Slot({
   slotId,
   correctShape,
@@ -360,6 +367,7 @@ function Slot({
   );
 }
 
+// -------- Main Game --------
 export default function DragDrop() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -389,6 +397,7 @@ export default function DragDrop() {
       !Object.values(placed).some((p) => p && p.id === s.id)
   );
 
+  // 🎯 FIXED: Enhanced progress reporting
   const reportProgress = async (isCompleted = false, finalScore = null) => {
     const currentScore = finalScore !== null ? finalScore : score;
     const totalLevels = QUESTIONS.length;
@@ -401,17 +410,19 @@ export default function DragDrop() {
       progressPercentage: progressPercentage,
       completed: isCompleted,
       finalScore: isCompleted ? currentScore : undefined,
-      points: currentScore,
+      points: currentScore, // Use same as score for now
     };
 
     console.log("📊 Reporting progress:", gameData);
 
+    // 1. Save to localStorage
     try {
       localStorage.setItem(`game_progress_${gameId}`, JSON.stringify(gameData));
     } catch (err) {
       console.warn("localStorage save failed", err);
     }
 
+    // 2. Save to Firebase
     if (userData?.uid && gameId) {
       try {
         const scoreDocRef = doc(db, "users", userData.uid, "scores", gameId);
@@ -435,6 +446,7 @@ export default function DragDrop() {
       }
     }
 
+    // 3. Send message to parent (MainComDep)
     const messageData = {
       type: "GAME_COMPLETE",
       unitId: unitId,
@@ -442,17 +454,24 @@ export default function DragDrop() {
       gameData: gameData,
     };
 
+    console.log("📨 Sending message to parent:", messageData);
+
+    // Try multiple ways to send the message
     if (window.parent !== window) {
       window.parent.postMessage(messageData, "*");
     }
+
     if (window.opener) {
       window.opener.postMessage(messageData, "*");
     }
+
+    // Also try to send to the same window (for testing)
     window.postMessage(messageData, "*");
 
     return gameData;
   };
 
+  // Save progress when level or score changes
   useEffect(() => {
     if (currentLevel > 0 || score > 0) {
       reportProgress(false).catch(console.error);
@@ -478,11 +497,13 @@ export default function DragDrop() {
     if (!draggedShape) return;
 
     if (slot.correctShape === item.shapeType) {
+      // Correct placement
       correctSound.currentTime = 0;
       correctSound.play().catch(console.error);
       setPlaced((prev) => ({ ...prev, [slotId]: draggedShape }));
-      setScore((s) => s + 50);
+      setScore((s) => s + 50); // Points per correct placement
     } else {
+      // Wrong placement
       wrongSound.currentTime = 0;
       wrongSound.play().catch(console.error);
       setLives((prev) => {
@@ -495,25 +516,35 @@ export default function DragDrop() {
     }
   };
 
+  // Check level completion
   useEffect(() => {
     if (Object.keys(placed).length === slots.length) {
       setTimeout(() => {
         if (currentLevel < QUESTIONS.length - 1) {
+          // Move to next level
           const nextLevel = currentLevel + 1;
           setCurrentLevel(nextLevel);
           setPlaced({});
+
+          // Show lives modal only when moving to level 2
           if (nextLevel === 1) {
             setShowLivesModal(true);
           }
+
+          // Reset lives for new levels
           if (nextLevel >= 1) {
             setLives(3);
           }
         } else {
+          // Game completed - calculate final score with bonus
           const levelBonus = currentQuestion.points;
           const finalScore = score + levelBonus;
           setGameCompleted(true);
           setShowGameOverModal(true);
+
           console.log("🎮 Game completed! Final score:", finalScore);
+
+          // Report final completion
           reportProgress(true, finalScore).catch(console.error);
         }
       }, 1000);
@@ -533,7 +564,9 @@ export default function DragDrop() {
   };
 
   const exitGame = () => {
+    // Save current progress before exiting
     reportProgress(false).catch(console.error);
+
     navigate(-1, {
       state: {
         gameCompletion: true,
@@ -555,6 +588,7 @@ export default function DragDrop() {
   const exitWithCompletion = () => {
     const levelBonus = currentQuestion.points;
     const finalScore = score + levelBonus;
+
     reportProgress(true, finalScore)
       .then(() => {
         navigate(-1, {
@@ -689,6 +723,7 @@ export default function DragDrop() {
           )}
         </footer>
 
+        {/* Modals */}
         {showLivesModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
             <div
