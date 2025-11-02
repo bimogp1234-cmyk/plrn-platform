@@ -153,6 +153,32 @@ export default function MainComDep() {
           gradientRight: "from-amber-600 to-yellow-400",
         },
         {
+          path: "realisticarena",
+          title: " Realistic Arena ",
+          unit: 0,
+          gameId: "hangman",
+          description: "احزر كلمات البرمجة قبل فوات الأوان",
+          level: "متوسط",
+          levelColor: "yellow",
+          icon: <BugReport />,
+          points: 100,
+          gradientLeft: "from-yellow-400 to-amber-600",
+          gradientRight: "from-amber-600 to-yellow-400",
+        },
+        {
+          path: "hangman",
+          title: "لعبة الرجل المشنوق",
+          unit: 0,
+          gameId: "hangman",
+          description: "احزر كلمات البرمجة قبل فوات الأوان",
+          level: "متوسط",
+          levelColor: "yellow",
+          icon: <BugReport />,
+          points: 100,
+          gradientLeft: "from-yellow-400 to-amber-600",
+          gradientRight: "from-amber-600 to-yellow-400",
+        },
+        {
           path: "flowchartgame",
           title: "مغامرة الخوارزميات",
           unit: 1,
@@ -221,7 +247,7 @@ export default function MainComDep() {
         requiredScore: 0,
         totalScore: 0,
         completedGames: 0,
-        totalGames: 2, // dragDrop + hangman
+        totalGames: 4, // dragDrop + hangman
         maxPossibleScore: 200,
       },
       {
@@ -1023,27 +1049,6 @@ export default function MainComDep() {
             )}
           </div>
         </div>
-      </div>
-
-      {/* Debug Info */}
-      <div className="w-full max-w-7xl mb-4">
-        <details
-          className={`text-sm ${darkMode ? "text-gray-300" : "text-gray-600"}`}
-        >
-          <summary>معلومات التصحيح (Debug)</summary>
-          <div className="mt-2 p-2 bg-black/20 rounded">
-            <p>الوحدات المفتوحة: {unlockedUnits.join(", ")}</p>
-            <p>إجمالي النقاط: {userScore}</p>
-            <p>
-              عدد الألعاب المكتملة:{" "}
-              {
-                Object.values(gameScores).filter((score) => score.completed)
-                  .length
-              }
-            </p>
-            <p>معرف المستخدم: {userData?.uid || "غير متوفر"}</p>
-          </div>
-        </details>
       </div>
 
       {/* Main content - UPDATED LAYOUT */}

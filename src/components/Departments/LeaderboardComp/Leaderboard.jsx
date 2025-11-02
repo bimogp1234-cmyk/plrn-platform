@@ -328,13 +328,6 @@ const Leaderboard = ({ darkMode, userId, userScore, isMobile }) => {
           تحديث
         </Button>
       </div>
-
-      {lastUpdated && (
-        <Typography variant="caption" className="text-gray-500 block mb-3">
-          آخر تحديث: {formatTime(lastUpdated)}
-        </Typography>
-      )}
-
       {leaderboardData.length === 0 ? (
         <Box className="text-center py-6">
           <Person
