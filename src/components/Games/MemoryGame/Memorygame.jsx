@@ -11,7 +11,7 @@ import {
 } from "@mui/material";
 import { Brightness4, ArrowBack } from "@mui/icons-material";
 import "./Memorygame.css";
-import logoImg from "../../assets/logo/logo.png";
+import logoImg from "../../../assets/logo/logo.png";
 
 const images = [
   "begin.jpg",

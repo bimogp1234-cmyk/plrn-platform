@@ -7,13 +7,14 @@ import Main from "./components/Main/Main";
 import ProtectedRoute from "./components/Routes/ProtectedRoute";
 import Dashboard from "./components/Dashboard/Dashboard";
 import NotFoundPage from "./components/NotFound/NotFoundPage";
-import HangmanGame from "./components/HangmanGame/HangmanGame";
-import MemoryGame from "./components/MemoryGame/Memorygame";
+import DragDrop from "./components/Games/DragDrop/DragDrop";
+import Memorygame from "./components/Games/MemoryGame/Memorygame";
+import MessingLines from "./components/Games/MessingLines/MessingLines";
 import MainComDep from "./components/Departments/ComputerDep/MainComDep";
 import PhysicDep from "./components/Departments/PhysicsDep/PhysicDep";
 import MathDep from "./components/Departments/MathDep/MathDep";
 import FirstAidDep from "./components/Departments/FirstAidDep/FirstAidDep";
-import FlowchartGame from "./components/Games/FlowchartGame";
+
 export default function App() {
   return (
     <div className="min-h-screen text-gray-900 relative">
@@ -30,7 +31,6 @@ export default function App() {
             <Route path="physicdep" element={<PhysicDep />} />
             <Route path="mathdep" element={<MathDep />} />
             <Route path="firstaid" element={<FirstAidDep />} />
-            <Route path="flowchartgame" element={<FlowchartGame />} />
             <Route
               path="/dashboard"
               element={
@@ -40,8 +40,9 @@ export default function App() {
               }
             />
 
-            <Route path="/hangman" element={<HangmanGame />} />
-            <Route path="/memorycard" element={<MemoryGame />} />
+            <Route path="/dragDrop" element={<DragDrop />} />
+            <Route path="/messinglines" element={<MessingLines />} />
+            <Route path="/memorycard" element={<Memorygame />} />
           </Routes>
         </Router>
       </AuthProvider>

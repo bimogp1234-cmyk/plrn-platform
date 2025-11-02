@@ -1,101 +1,222 @@
-import { useState } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { Link } from "react-router-dom";
 import { auth, db } from "../../FireBaseDatabase/firebase";
 import logo from "../../assets/logo/logo.png";
 import {
   signInWithEmailAndPassword,
   signInWithPopup,
   GoogleAuthProvider,
+  updatePassword,
 } from "firebase/auth";
-import { doc, setDoc } from "firebase/firestore";
+import {
+  doc,
+  setDoc,
+  getDoc,
+  query,
+  collection,
+  where,
+  getDocs,
+} from "firebase/firestore";
 
 const LoginForm = () => {
-  const location = useLocation();
-  const { email = "", password = "" } = location.state || {};
-  const [formState, setFormState] = useState({ email, password });
+  const [formState, setFormState] = useState({ identifier: "", password: "" });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
-  function handleChange(e) {
+  // Google password setup
+  const [setPasswordMode, setSetPasswordMode] = useState(false);
+  const [googleUser, setGoogleUser] = useState(null);
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [passwordMatch, setPasswordMatch] = useState(true);
+  const [message, setMessage] = useState("");
+
+  const style =
+    "w-full px-4 py-3 rounded-xl border border-gray-300 text-right placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-green-400";
+
+  // Realtime password confirmation check
+  useEffect(() => {
+    setPasswordMatch(newPassword === confirmPassword);
+  }, [newPassword, confirmPassword]);
+
+  const handleChange = (e) => {
     const { name, value } = e.target;
     setFormState((prev) => ({ ...prev, [name]: value }));
-  }
+  };
 
-  // Handle Email/Password login
-  async function handleSubmit(e) {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
     setError("");
-
     try {
-      const { email, password } = formState;
-      const userCredential = await signInWithEmailAndPassword(
-        auth,
-        email,
-        password
+      const usersRef = collection(db, "users");
+      const qEmail = query(
+        usersRef,
+        where("email", "==", formState.identifier)
       );
-      const user = userCredential.user;
-
-      // Save or merge user info in Firestore
-      await setDoc(
-        doc(db, "users", user.uid),
-        {
-          email: user.email,
-          lastLogin: Date.now(),
-        },
-        { merge: true } // Preserve existing fields
+      const qUsername = query(
+        usersRef,
+        where("username", "==", formState.identifier)
       );
 
-      window.location.href = "/dashboard";
-    } catch (error) {
-      if (error.code === "auth/user-not-found") {
-        setError("لا يوجد مستخدم بهذا البريد الإلكتروني.");
-      } else if (error.code === "auth/wrong-password") {
-        setError("كلمة المرور غير صحيحة.");
-        setFormState((prev) => ({ ...prev, password: "" }));
-      } else if (error.code === "auth/invalid-email") {
-        setError("البريد الإلكتروني غير صالح.");
-      } else {
-        setError("حدث خطأ أثناء تسجيل الدخول. حاول مرة أخرى.");
+      const snapEmail = await getDocs(qEmail);
+      const snapUsername = await getDocs(qUsername);
+      const userDoc = snapEmail.docs[0] || snapUsername.docs[0];
+
+      if (!userDoc) {
+        setError("لا يوجد مستخدم بهذا البريد الإلكتروني أو اسم المستخدم.");
+        setLoading(false);
+        return;
       }
-      setTimeout(() => setError(""), 3000);
-      setLoading(false);
-    }
-  }
 
-  // Handle Google login
-  async function handleGoogleLogin() {
-    const provider = new GoogleAuthProvider();
-    setLoading(true);
-    setError("");
+      const email = userDoc.data().email;
+      await signInWithEmailAndPassword(auth, email, formState.password);
 
-    try {
-      const result = await signInWithPopup(auth, provider);
-      const user = result.user;
-
-      // Save user info to Firestore without overwriting existing fields
       await setDoc(
-        doc(db, "users", user.uid),
-        {
-          name: user.displayName,
-          email: user.email,
-          photoURL: user.photoURL,
-          provider: "google",
-          lastLogin: Date.now(),
-        },
+        doc(db, "users", userDoc.id),
+        { lastLogin: Date.now() },
         { merge: true }
       );
 
-      setTimeout(() => {
-        window.location.href = "/dashboard";
-      }, 1500);
-    } catch (error) {
-      console.error(error);
-      setError("تعذر تسجيل الدخول باستخدام Google. حاول مرة أخرى.");
-      setTimeout(() => setError(""), 3000);
+      window.location.href = "/dashboard";
+    } catch (err) {
+      console.error(err);
+      setError(
+        "فشل تسجيل الدخول. تحقق من البيانات أو جرب تسجيل الدخول عبر Google."
+      );
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleGoogleLogin = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const provider = new GoogleAuthProvider();
+      const result = await signInWithPopup(auth, provider);
+      const user = result.user;
+      const userRef = doc(db, "users", user.uid);
+      const userSnap = await getDoc(userRef);
+
+      if (!userSnap.exists() || !userSnap.data().passwordSet) {
+        if (!userSnap.exists()) {
+          await setDoc(userRef, {
+            fullName: user.displayName || "",
+            username: user.displayName
+              ? user.displayName.replace(/\s+/g, "")
+              : "",
+            email: user.email,
+            provider: "google",
+            agree: true,
+            lastLogin: Date.now(),
+          });
+        } else {
+          await setDoc(
+            userRef,
+            { lastLogin: Date.now(), provider: "google" },
+            { merge: true }
+          );
+        }
+        setGoogleUser(user);
+        setSetPasswordMode(true);
+      } else {
+        window.location.href = "/dashboard";
+      }
+    } catch (err) {
+      console.error(err);
+      setError("فشل تسجيل الدخول عبر Google.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSetPassword = async (e) => {
+    e.preventDefault();
+    if (!googleUser) return;
+    if (!passwordMatch) return;
+
+    setLoading(true);
+    setError("");
+    setMessage("");
+
+    try {
+      await updatePassword(googleUser, newPassword);
+      await setDoc(
+        doc(db, "users", googleUser.uid),
+        { passwordSet: true, lastLogin: Date.now() },
+        { merge: true }
+      );
+
+      setMessage(
+        "✅ تم إضافة كلمة المرور بنجاح! يمكنك الآن تسجيل الدخول باستخدام البريد وكلمة المرور."
+      );
+      setSetPasswordMode(false);
+      setNewPassword("");
+      setConfirmPassword("");
+    } catch (err) {
+      console.error(err);
+      setError("❌ فشل إضافة كلمة المرور. حاول مرة أخرى.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (setPasswordMode) {
+    return (
+      <div
+        className="min-h-screen bg-gray-100 flex items-center justify-center px-4 sm:px-6 md:px-8 lg:px-12 font-[Tajawal]"
+        dir="rtl"
+        lang="ar"
+      >
+        <div className="w-full max-w-sm bg-white rounded-2xl shadow-xl p-6">
+          <h2 className="text-xl font-bold mb-4 text-center text-gray-800">
+            إضافة كلمة مرور جديدة
+          </h2>
+          <form onSubmit={handleSetPassword} className="space-y-4">
+            <input
+              type="password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              placeholder="أدخل كلمة المرور الجديدة"
+              required
+              className={style}
+            />
+            <input
+              type="password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              placeholder="تأكيد كلمة المرور"
+              required
+              className={`${style} ${!passwordMatch ? "border-red-500" : ""}`}
+            />
+            {!passwordMatch && (
+              <p className="text-red-500 text-sm text-center">
+                ❌ كلمة المرور غير متطابقة
+              </p>
+            )}
+            <button
+              type="submit"
+              disabled={loading || !passwordMatch}
+              className={`w-full py-3 bg-green-500 text-white font-bold rounded-full transition-all duration-300 ${
+                loading || !passwordMatch ? "opacity-50 cursor-not-allowed" : ""
+              }`}
+            >
+              {loading ? "جاري الحفظ..." : "حفظ كلمة المرور"}
+            </button>
+            {message && (
+              <p className="text-center mt-2 text-sm text-green-600">
+                {message}
+              </p>
+            )}
+            {error && (
+              <p className="text-center mt-2 text-sm text-red-500">{error}</p>
+            )}
+          </form>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -108,7 +229,7 @@ const LoginForm = () => {
         <Link to="/main">
           <img
             src={logo}
-            alt="plern Logo"
+            alt="Logo"
             className="w-20 mx-auto mb-4 cursor-pointer"
           />
         </Link>
@@ -117,90 +238,73 @@ const LoginForm = () => {
           تسجيل <div className="text-green-500">الدخول</div>
         </h2>
 
-        <form onSubmit={handleSubmit}>
-          <div className="space-y-4 mb-6">
-            <input
-              name="email"
-              value={formState.email}
-              onChange={handleChange}
-              type="email"
-              placeholder="البريد الإلكتروني"
-              required
-              className="w-full px-4 py-3 rounded-xl border border-gray-300 text-right placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-green-400"
-            />
+        <form onSubmit={handleSubmit} className="space-y-4 mb-6">
+          <input
+            name="identifier"
+            value={formState.identifier}
+            onChange={handleChange}
+            type="text"
+            placeholder="البريد الإلكتروني أو اسم المستخدم"
+            required
+            className={style}
+          />
+          <div className="relative">
             <input
               name="password"
               value={formState.password}
               onChange={handleChange}
-              type="password"
+              type={showPassword ? "text" : "password"}
               placeholder="كلمة المرور"
               required
-              className={`w-full px-4 py-3 rounded-xl border border-gray-300 text-right placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-green-400 ${
-                error === "كلمة المرور غير صحيحة." ? "animate-shake" : ""
-              }`}
+              className={`${style} pr-10`}
             />
-
-            {error && <p className="text-red-500 text-sm">{error}</p>}
-
-            <div className="text-right">
-              <Link
-                to="/forget-password"
-                className="text-sm text-blue-500 hover:underline font-medium"
-              >
-                نسيت كلمة المرور؟
-              </Link>
-            </div>
-          </div>
-
-          <div className="space-y-6">
-            <button
-              type="submit"
-              disabled={loading}
-              className={`w-full py-3 bg-green-500 text-white font-bold rounded-full transition-all duration-300 hover:bg-green-600 hover:scale-[1.02] ${
-                loading ? "opacity-50 cursor-not-allowed" : ""
-              }`}
-            >
-              {loading ? "جاري تسجيل الدخول..." : "تسجيل الدخول"}
-            </button>
-
-            <div className="relative text-center">
-              <span className="bg-white px-4 text-gray-500 z-10 relative">
-                أو
-              </span>
-              <div className="absolute top-1/2 left-0 right-0 h-px bg-gray-300 -z-0" />
-            </div>
-
             <button
               type="button"
-              onClick={handleGoogleLogin}
-              className="w-full flex items-center justify-center gap-2 py-3 border border-gray-300 rounded-full bg-white transition-all duration-300 hover:shadow-lg hover:scale-[1.02]"
+              onClick={() => setShowPassword((prev) => !prev)}
+              className="absolute top-1/2 right-3 -translate-y-1/2 text-gray-500 hover:text-gray-700"
             >
-              <img
-                src="https://www.svgrepo.com/show/475656/google-color.svg"
-                alt="Google logo"
-                className="w-5 h-5"
-              />
-              <span className="text-sm font-medium text-gray-700">
-                المتابعة باستخدام Google
-              </span>
+              {showPassword ? "🙈" : "👁️"}
             </button>
-
-            <div className="flex flex-wrap items-center justify-center gap-2 text-sm text-gray-600 text-[16px] font-bold">
-              <div className="whitespace-nowrap">ليس لديك حساب؟</div>
-              <a
-                href="/register"
-                className="relative inline-block group font-medium overflow-hidden"
-              >
-                <div className="px-3 py-1 relative">
-                  <div className="relative z-10 flex items-center gap-1 text-[#22c55e] transition-colors duration-500 group-hover:text-[#1565c0]">
-                    إنشاء حساب جديد
-                  </div>
-                  <div className="absolute bottom-0 right-3 h-[2px] w-0 bg-[#1565c0] transition-all duration-500 group-hover:w-[83.5%]" />
-                </div>
-              </a>
-            </div>
           </div>
+          {error && <p className="text-red-500 text-sm">{error}</p>}
+
+          <button
+            type="submit"
+            disabled={loading}
+            className={`w-full py-3 bg-green-500 text-white font-bold rounded-full transition-all duration-300 hover:bg-green-600 hover:scale-[1.02] ${
+              loading ? "opacity-50 cursor-not-allowed" : ""
+            }`}
+          >
+            {loading ? "جارٍ تسجيل الدخول..." : "تسجيل الدخول"}
+          </button>
         </form>
+
+        <div className="relative text-center mb-4">
+          <span className="bg-white px-4 text-gray-500 z-10 relative">أو</span>
+          <div className="absolute top-1/2 left-0 right-0 h-px bg-gray-300 -z-0" />
+        </div>
+
+        <button
+          type="button"
+          onClick={handleGoogleLogin}
+          className="w-full flex items-center justify-center gap-2 py-3 border border-gray-300 rounded-full bg-white transition-all duration-300 hover:shadow-lg hover:scale-[1.02]"
+        >
+          <img
+            src="https://www.svgrepo.com/show/475656/google-color.svg"
+            alt="Google logo"
+            className="w-5 h-5"
+          />
+          <span className="text-sm font-medium text-gray-700">
+            المتابعة باستخدام Google
+          </span>
+        </button>
+
+        <div className="flex flex-wrap items-center justify-center gap-2 text-sm text-gray-600 text-[16px] font-bold mt-4">
+          <div className="whitespace-nowrap">ليس لديك حساب؟</div>
+          <Link to="/register" className="text-green-500 font-bold">
+            إنشاء حساب جديد
+          </Link>
+        </div>
       </div>
     </div>
   );

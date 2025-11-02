@@ -10,10 +10,10 @@ import outputAnim from "./lottie/start.json";
 import endAnim from "./lottie/start.json";
 
 // Sound files (import returns a URL that bundlers handle)
-import correctSoundFile from "../../../public/sound/win1.mp3";
-import wrongSoundFile from "../../../public/sound/lose1.mp3";
-import winSoundFile from "../../../public/sound/win1.mp3";
-import failSoundFile from "../../../public/sound/lose2.mp3";
+import correctSoundFile from "../../../../public/sound/win1.mp3";
+import wrongSoundFile from "../../../../public/sound/lose1.mp3";
+import winSoundFile from "../../../../public/sound/win1.mp3";
+import failSoundFile from "../../../../public/sound/lose2.mp3";
 
 // Questions
 const QUESTIONS = [

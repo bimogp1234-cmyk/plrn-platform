@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import {
   AppBar,
   Toolbar,
@@ -15,6 +15,10 @@ import {
   TextField,
   Button,
   Box,
+  Typography,
+  Grid,
+  useMediaQuery,
+  useTheme,
 } from "@mui/material";
 import {
   Brightness4,
@@ -23,64 +27,130 @@ import {
   Menu as MenuIcon,
   Close as CloseIcon,
   Home,
-  Link,
   Calculate,
   Science,
   Computer,
   LocalHospital,
+  Save,
+  Edit,
+  Person,
+  AccountCircle,
+  Face,
+  EmojiPeople,
+  SelfImprovement,
 } from "@mui/icons-material";
 import { useNavigate } from "react-router-dom";
-
-import { Save, Edit, PhotoCamera } from "@mui/icons-material";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-// Firebase imports — keep these as in your project (firebase is assumed initialized)
+import { signOut, onAuthStateChanged } from "firebase/auth";
 import {
-  signOut,
-  signInWithCustomToken,
-  onAuthStateChanged,
-} from "firebase/auth";
-import { doc, onSnapshot, setDoc } from "firebase/firestore";
+  doc,
+  onSnapshot,
+  setDoc,
+  collection,
+  query,
+  orderBy,
+  limit,
+} from "firebase/firestore";
 import { auth, db } from "../../FireBaseDatabase/firebase";
 
-// -----------------------------------------------------------------------------
-// DashboardCombined.jsx
-// - Contains two components in one file:
-//   1) Dashboard (main app)
-//   2) ProfileEditModal (inline, used by Dashboard)
-// - Keeps your existing design and styling intact
-// - Loads mock "Firestore-like" data for games and programs (replace with real
-//   Firestore reads later if you want)
-// - Includes helpful comments and clear sections for maintainability
-// -----------------------------------------------------------------------------
+// ✅ Firestore Error Handler
+const handleFirestoreError = (error, showToast) => {
+  console.error("Firestore Error:", error);
 
-// -------------------------------
-// ProfileEditModal (inline)
-// -------------------------------
+  switch (error.code) {
+    case "permission-denied":
+      showToast("ليس لديك صلاحية للقيام بهذا الإجراء", "error");
+      break;
+    case "not-found":
+      showToast("البيانات المطلوبة غير موجودة", "warning");
+      break;
+    case "unavailable":
+      showToast("الخدمة غير متاحة حالياً، حاول لاحقاً", "error");
+      break;
+    case "invalid-argument":
+      showToast("بيانات غير صالحة", "error");
+      break;
+    default:
+      showToast("حدث خطأ غير متوقع", "error");
+  }
+};
+
+// ✅ Avatar options for user selection with Arabic names
+const avatarOptions = [
+  {
+    id: 1,
+    seed: "متعلم",
+    icon: <AccountCircle />,
+    color: "from-blue-500 to-cyan-500",
+  },
+  {
+    id: 2,
+    seed: "مبدع",
+    icon: <Face />,
+    color: "from-green-500 to-emerald-500",
+  },
+  {
+    id: 3,
+    seed: "مبتكر",
+    icon: <EmojiPeople />,
+    color: "from-purple-500 to-pink-500",
+  },
+  {
+    id: 4,
+    seed: "بطل",
+    icon: <SelfImprovement />,
+    color: "from-orange-500 to-red-500",
+  },
+  {
+    id: 5,
+    seed: "عالم",
+    icon: <Person />,
+    color: "from-indigo-500 to-blue-500",
+  },
+  {
+    id: 6,
+    seed: "مستكشف",
+    icon: <AccountCircle />,
+    color: "from-teal-500 to-green-500",
+  },
+];
+
+// ✅ Generate avatar URL based on seed
+const generateAvatarUrl = (seed, size = 100) => {
+  return `https://api.dicebear.com/7.x/avataaars/svg?seed=${seed}&size=${size}`;
+};
+
+// ✅ Profile Edit Modal with Avatar Selection
 function ProfileEditModal({
   isOpen = false,
   onClose,
   userData,
   userId,
   fb,
-  appId,
   darkMode,
   showToast,
 }) {
-  const [editedData, setEditedData] = useState({
-    fullName: "",
-    file: null,
-  });
-  const [previewURL, setPreviewURL] = useState("");
+  const [editedData, setEditedData] = useState({ name: "" });
+  const [selectedAvatar, setSelectedAvatar] = useState("متعلم");
   const [isSaving, setIsSaving] = useState(false);
 
-  // Keep form synced with userData
   useEffect(() => {
     if (userData) {
       setEditedData({
-        fullName: userData.fullName || userData.name || "",
-        file: null,
+        name: userData.name || userData.fullName || "",
       });
-      setPreviewURL(userData.photoURL || "");
+
+      // Extract seed from current photo URL
+      if (userData.photoURL) {
+        try {
+          const url = new URL(userData.photoURL);
+          const currentSeed = url.searchParams.get("seed") || "متعلم";
+          setSelectedAvatar(currentSeed);
+        } catch {
+          setSelectedAvatar("متعلم");
+        }
+      } else {
+        setSelectedAvatar("متعلم");
+      }
     }
   }, [userData]);
 
@@ -89,67 +159,134 @@ function ProfileEditModal({
     setEditedData((prev) => ({ ...prev, [name]: value }));
   };
 
-  const handleFileChange = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    setEditedData((prev) => ({ ...prev, file }));
-    setPreviewURL(URL.createObjectURL(file));
+  const handleAvatarSelect = (seed) => {
+    setSelectedAvatar(seed);
   };
 
+  // ✅ Initialize user subcollections
+  const initializeUserSubcollections = async (
+    userId,
+    userName,
+    userPhotoURL
+  ) => {
+    if (!fb?.db) return;
+
+    try {
+      // Progress subcollection
+      const progressRef = doc(fb.db, "users", userId, "progress", "data");
+      await setDoc(
+        progressRef,
+        {
+          lastPoint: 0,
+          createdAt: new Date(),
+        },
+        { merge: true }
+      );
+
+      // Scores subcollection
+      const scoresRef = doc(fb.db, "users", userId, "scores", "data");
+      await setDoc(
+        scoresRef,
+        {
+          totalScore: 0,
+          sessions: 0,
+          createdAt: new Date(),
+        },
+        { merge: true }
+      );
+
+      // Leaderboard entry (in user's subcollection)
+      const userLeaderboardRef = doc(
+        fb.db,
+        "users",
+        userId,
+        "leaderboard",
+        userId
+      );
+      await setDoc(
+        userLeaderboardRef,
+        {
+          userId: userId,
+          score: 0,
+          name: userName,
+          photoURL: userPhotoURL,
+          updatedAt: new Date(),
+        },
+        { merge: true }
+      );
+
+      // Global leaderboard entry
+      const globalLeaderboardRef = doc(fb.db, "leaderboard", userId);
+      await setDoc(
+        globalLeaderboardRef,
+        {
+          userId: userId,
+          score: 0,
+          name: userName,
+          photoURL: userPhotoURL,
+          updatedAt: new Date(),
+        },
+        { merge: true }
+      );
+
+      console.log("Initialized user subcollections for:", userId);
+    } catch (error) {
+      console.error("Error initializing subcollections:", error);
+    }
+  };
+
+  // ✅ Save user profile
   const handleProfileSave = async () => {
     if (!fb?.db || !userId) {
-      showToast("خطأ: لم يتم تهيئة المصادقة أو قاعدة البيانات.", "error");
+      showToast("خطأ: لم يتم تهيئة قاعدة البيانات.", "error");
       return;
     }
 
-    if (!editedData.fullName.trim()) {
-      showToast("الرجاء إدخال الاسم الكامل.", "warning");
+    if (!editedData.name?.trim()) {
+      showToast("الرجاء إدخال الاسم.", "warning");
       return;
     }
 
     setIsSaving(true);
 
-    let finalPhotoURL = previewURL;
-
     try {
-      // Upload new photo if selected
-      if (editedData.file) {
-        const storageRef = ref(
-          fb.storage,
-          `profile_pictures/${userId}/${editedData.file.name}`
-        );
-        await uploadBytes(storageRef, editedData.file);
-        finalPhotoURL = await getDownloadURL(storageRef);
-      }
+      // ✅ Always use selected avatar
+      const finalPhotoURL = generateAvatarUrl(selectedAvatar);
 
-      const userDocRef = doc(
-        fb.db,
-        `artifacts/${appId}/users/${userId}/profile`,
-        "data"
-      );
+      // ✅ Save to main user document
+      const userDocRef = doc(fb.db, "users", userId);
       await setDoc(
         userDocRef,
         {
-          fullName: editedData.fullName,
+          name: editedData.name.trim(),
           photoURL: finalPhotoURL,
-          lastUpdated: Date.now(),
+          email: userData?.email || auth.currentUser?.email,
+          lastUpdated: new Date(),
+          ...(userData?.createdAt && { createdAt: userData.createdAt }),
+          lastLogin: new Date(),
         },
         { merge: true }
       );
 
-      showToast("تم حفظ الملف الشخصي بنجاح!", "success");
+      // ✅ Initialize subcollections
+      await initializeUserSubcollections(
+        userId,
+        editedData.name.trim(),
+        finalPhotoURL
+      );
+
+      showToast("تم تحديث الملف الشخصي بنجاح!", "success");
       onClose();
     } catch (error) {
       console.error("Error saving profile:", error);
-      const errorMessage =
-        error?.code === "permission-denied"
-          ? "فشل الحفظ: يرجى التحقق من قواعد الأمان (write)."
-          : "فشل الحفظ: حدث خطأ غير متوقع.";
-      showToast(errorMessage, "error");
+      handleFirestoreError(error, showToast);
     } finally {
       setIsSaving(false);
     }
   };
+
+  // Get current photo URL for display
+  const currentPhotoURL = generateAvatarUrl(selectedAvatar);
 
   return (
     <Dialog
@@ -158,100 +295,200 @@ function ProfileEditModal({
       fullWidth
       maxWidth="sm"
       PaperProps={{
-        className: `${
+        className: `rounded-2xl shadow-2xl border-2 ${
           darkMode
-            ? "bg-gray-800 text-white shadow-xl shadow-green-900/50"
-            : "bg-white text-gray-900 shadow-lg"
-        } transition-colors duration-300 rounded-xl`,
+            ? "bg-gradient-to-br from-gray-800 via-gray-800 to-green-900/40 border-green-500/50 text-white"
+            : "bg-gradient-to-br from-white via-green-50 to-blue-50 border-green-300 text-gray-800"
+        } transition-all duration-300`,
       }}
       dir="rtl"
     >
       <DialogTitle
-        className={`text-center font-bold text-2xl border-b ${
-          darkMode
-            ? "border-gray-700 text-green-400"
-            : "border-gray-200 text-green-600"
+        className={`text-center p-6 ${
+          darkMode ? "bg-green-900/20" : "bg-green-100/50"
+        } rounded-t-2xl border-b ${
+          darkMode ? "border-green-500/30" : "border-green-200"
         }`}
       >
-        <Edit className="ml-2" />
-        تعديل الملف الشخصي
+        <div className="flex items-center justify-center gap-2">
+          <Edit
+            className={`${darkMode ? "text-green-400" : "text-green-600"}`}
+          />
+          <Typography
+            variant="h5"
+            className={`font-bold ${
+              darkMode ? "text-green-400" : "text-green-600"
+            }`}
+          >
+            تعديل الملف الشخصي
+          </Typography>
+        </div>
       </DialogTitle>
 
-      <DialogContent className="py-6 space-y-6 flex flex-col items-center">
-        {/* Profile picture */}
-        <Box className="relative">
-          <Avatar
-            src={
-              previewURL || "https://placehold.co/100x100/333333/ffffff?text=?"
-            }
-            alt={editedData.fullName || "User"}
-            className="w-24 h-24 mb-4 border-4 border-green-500 shadow-lg cursor-pointer"
+      <DialogContent className="p-6">
+        <div className="flex flex-col space-y-6">
+          {/* Current Avatar Display */}
+          <div className="flex flex-col items-center space-y-4">
+            <div className="relative">
+              <Avatar
+                src={currentPhotoURL}
+                alt={editedData.name || "User"}
+                className={`w-32 h-32 border-4 shadow-lg ${
+                  darkMode ? "border-green-500" : "border-green-400"
+                }`}
+              />
+            </div>
+          </div>
+
+          {/* Only Editable Field - Username */}
+          <TextField
+            fullWidth
+            name="name"
+            label="اسم المستخدم"
+            type="text"
+            variant="outlined"
+            value={editedData.name}
+            onChange={handleInputChange}
+            InputLabelProps={{
+              shrink: true,
+              className: darkMode ? "text-green-300" : "text-green-700",
+            }}
+            InputProps={{
+              className: `rounded-xl ${
+                darkMode
+                  ? "bg-gray-700/50 border-green-500/30 text-white placeholder-green-200"
+                  : "bg-white border-green-300 text-gray-800 placeholder-green-400"
+              }`,
+            }}
+            placeholder="أدخل اسمك الجديد"
+            autoFocus
           />
-          <input
-            accept="image/*"
-            style={{ display: "none" }}
-            id="profile-pic-upload"
-            type="file"
-            onChange={handleFileChange}
-          />
-          <label htmlFor="profile-pic-upload">
-            <IconButton
-              color="primary"
-              component="span"
-              className="absolute bottom-0 right-0 bg-green-500 hover:bg-green-600 text-white"
-            >
-              <PhotoCamera />
-            </IconButton>
-          </label>
-        </Box>
 
-        {/* Full Name */}
-        <TextField
-          margin="dense"
-          name="fullName"
-          label="الاسم الكامل"
-          type="text"
-          fullWidth
-          variant="outlined"
-          value={editedData.fullName}
-          onChange={handleInputChange}
-          InputLabelProps={{ shrink: true }}
-        />
+          {/* Avatar Selection Section */}
+          <div
+            className={`p-4 rounded-xl border ${
+              darkMode
+                ? "bg-gray-700/30 border-green-500/30"
+                : "bg-green-50/70 border-green-200"
+            }`}
+          >
+            <div className="flex items-center gap-2 mb-4">
+              <Person
+                className={`text-sm ${
+                  darkMode ? "text-green-400" : "text-green-600"
+                }`}
+              />
+              <Typography
+                variant="body2"
+                className={`font-semibold ${
+                  darkMode ? "text-green-400" : "text-green-600"
+                }`}
+              >
+                اختر صورتك الشخصية
+              </Typography>
+            </div>
 
-        {/* Email (read-only) */}
-        <TextField
-          margin="dense"
-          label="البريد الإلكتروني"
-          type="email"
-          fullWidth
-          variant="outlined"
-          value={userData?.email || ""}
-          disabled
-          InputLabelProps={{ shrink: true }}
-        />
+            <Grid container spacing={2}>
+              {avatarOptions.map((avatar) => (
+                <Grid item xs={4} key={avatar.id}>
+                  <div
+                    className={`flex flex-col items-center p-3 rounded-xl cursor-pointer transition-all duration-200 border-2 ${
+                      selectedAvatar === avatar.seed
+                        ? darkMode
+                          ? "bg-green-500/20 border-green-500 shadow-lg"
+                          : "bg-green-100 border-green-400 shadow-md"
+                        : darkMode
+                        ? "bg-gray-600/30 border-gray-500/30 hover:bg-gray-600/50 hover:border-green-400/50"
+                        : "bg-white border-gray-200 hover:bg-green-50 hover:border-green-300"
+                    }`}
+                    onClick={() => handleAvatarSelect(avatar.seed)}
+                  >
+                    <Avatar
+                      src={generateAvatarUrl(avatar.seed)}
+                      className={`w-16 h-16 mb-2 transition-transform ${
+                        selectedAvatar === avatar.seed
+                          ? "scale-110 ring-2 ring-green-500"
+                          : ""
+                      }`}
+                    />
+                    <div
+                      className={`text-xs font-medium ${
+                        darkMode ? "text-green-300" : "text-green-700"
+                      }`}
+                    >
+                      {avatar.seed}
+                    </div>
+                  </div>
+                </Grid>
+              ))}
+            </Grid>
+          </div>
 
-        {/* User ID (read-only) */}
-        <TextField
-          margin="dense"
-          label="معرّف المستخدم"
-          type="text"
-          fullWidth
-          variant="outlined"
-          value={userId || "N/A"}
-          disabled
-          InputLabelProps={{ shrink: true }}
-        />
+          {/* Info Section */}
+          <div
+            className={`w-full p-4 rounded-xl border ${
+              darkMode
+                ? "bg-gray-700/30 border-green-500/30"
+                : "bg-green-50/70 border-green-200"
+            }`}
+          >
+            <div className="flex items-center gap-2 mb-3">
+              <Person
+                className={`text-sm ${
+                  darkMode ? "text-green-400" : "text-green-600"
+                }`}
+              />
+              <Typography
+                variant="body2"
+                className={`font-semibold ${
+                  darkMode ? "text-green-400" : "text-green-600"
+                }`}
+              >
+                معلومات الحساب
+              </Typography>
+            </div>
+
+            <div className="space-y-3 text-sm">
+              <div className="flex justify-between items-center">
+                <span
+                  className={darkMode ? "text-green-300" : "text-green-700"}
+                >
+                  اسم المستخدم :
+                </span>
+                <span className={darkMode ? "text-white" : "text-gray-800"}>
+                  {userData?.name || "لم يتم تعيينه"}
+                </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span
+                  className={darkMode ? "text-green-300" : "text-green-700"}
+                >
+                  البريد الإلكتروني:
+                </span>
+                <span className={darkMode ? "text-white" : "text-gray-800"}>
+                  {userData?.email || auth.currentUser?.email}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
       </DialogContent>
 
-      <DialogActions className="p-4 flex justify-between">
+      <DialogActions
+        className={`p-4 gap-2 ${
+          darkMode ? "bg-green-900/10" : "bg-green-50/50"
+        } rounded-b-2xl border-t ${
+          darkMode ? "border-green-500/30" : "border-green-200"
+        }`}
+      >
         <Button
           onClick={onClose}
           variant="outlined"
-          className={`font-bold transition-all ${
+          className={`font-bold rounded-xl border-2 px-6 ${
             darkMode
-              ? "text-white border-red-500 hover:bg-red-500/10"
-              : "text-red-500 border-red-500 hover:bg-red-500/10"
-          }`}
+              ? "border-red-500 text-red-400 hover:bg-red-500/20 hover:border-red-400"
+              : "border-red-500 text-red-500 hover:bg-red-500/10 hover:border-red-600"
+          } transition-all duration-200`}
           disabled={isSaving}
         >
           إلغاء
@@ -259,16 +496,17 @@ function ProfileEditModal({
         <Button
           onClick={handleProfileSave}
           variant="contained"
-          className="font-bold bg-green-500 hover:bg-green-600 text-white transition-all transform hover:scale-[1.02]"
+          className={`font-bold rounded-xl px-6 bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white shadow-lg hover:shadow-xl transition-all duration-200 border-2 border-green-700`}
           startIcon={<Save />}
           disabled={isSaving}
         >
-          {isSaving ? "جاري الحفظ..." : "حفظ التعديلات"}
+          {isSaving ? "جاري الحفظ..." : "حفظ التغييرات"}
         </Button>
       </DialogActions>
     </Dialog>
   );
 }
+
 // -------------------------------
 // Dashboard (main)
 // -------------------------------
@@ -281,191 +519,254 @@ export default function Dashboard() {
   const [showWelcome, setShowWelcome] = useState(true);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
-  const handleOpen = (path) => {
-    if (!path) {
-      showToast("المسار غير متاح حالياً.", "info");
-      return;
-    }
 
-    if (!userId || !userData) {
-      showToast("يجب تسجيل الدخول أولاً.", "warning");
-      return;
-    }
-
-    setIsSidebarOpen(false);
-
-    // Navigate and send user data via router state
-    navigate(`/${path}`, {
-      state: {
-        userId,
-        userData,
-        darkMode,
-      },
-    });
-  };
+  // ----------------- Responsive Breakpoints -----------------
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down("md")); // < 768px
+  const isTablet = useMediaQuery(theme.breakpoints.between("md", "lg")); // 768px - 1024px
+  const isDesktop = useMediaQuery(theme.breakpoints.up("lg")); // > 1024px
 
   // ----------------- Firebase & user state -----------------
-  // fb holds db & auth wrappers so we can pass them to modal
   const [fb, setFb] = useState({ auth, db });
   const [userId, setUserId] = useState(null);
   const [userData, setUserData] = useState(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
 
-  // ----------------- Content (mocked Firestore style) -----------------
-  // We'll load mock data here — structured like a Firestore response so swapping to
-  // real Firestore reads will be trivial.
+  // ----------------- Content -----------------
   const [programs, setPrograms] = useState([]);
-
   const sectionRef = useRef(null);
 
-  // ----------------- Helper: toast -----------------
-  const showToast = (message, type = "success") => {
+  // ----------------- Toast Helper -----------------
+  const showToast = useCallback((message, type = "success") => {
     const id = Date.now();
     setToasts((p) => [...p, { id, message, type }]);
-    // Auto remove after 3s
     setTimeout(() => setToasts((p) => p.filter((t) => t.id !== id)), 3000);
-  };
+  }, []);
 
   // ----------------- Greeting -----------------
   const getGreeting = () => {
-    // Detect user's local timezone
     const userTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-
-    // Define Sudan’s timezone and offset (UTC+2)
     const sudanOffset = 2;
-
     let hour;
 
     try {
       if (userTimeZone === "Africa/Khartoum") {
-        // User is in Sudan — just use local time
         hour = new Date().getHours();
       } else {
-        // Convert UTC time to Sudan local time
         const now = new Date();
         hour = (now.getUTCHours() + sudanOffset) % 24;
       }
     } catch (error) {
-      // Fallback in case timezone detection fails
       hour = (new Date().getUTCHours() + sudanOffset) % 24;
     }
 
-    // Determine greeting based on Sudan’s local time
     if (hour < 12) return "صباح الخير";
     if (hour < 18) return "مساء الخير";
     return "مساء النور";
   };
 
+  // ✅ Get user photo URL
+  const getUserPhotoURL = (userData) => {
+    return userData?.photoURL || generateAvatarUrl("متعلم");
+  };
+
+  // ✅ Initialize user document
+  const initializeUserDocument = async (userId, authUser) => {
+    if (!fb?.db || !userId) return;
+
+    try {
+      const userDocRef = doc(fb.db, "users", userId);
+      const photoURL = generateAvatarUrl("متعلم");
+
+      await setDoc(
+        userDocRef,
+        {
+          email: authUser?.email || "",
+          name: authUser?.displayName || "ضيف جديد",
+          photoURL: photoURL,
+          createdAt: new Date(),
+          lastLogin: new Date(),
+        },
+        { merge: true }
+      );
+
+      console.log("Initialized user document for:", userId);
+    } catch (error) {
+      console.error("Error initializing user document:", error);
+    }
+  };
+
   // ----------------- Auth initialization -----------------
   useEffect(() => {
-    // Keep Firebase objects from imports in state to pass down
     setFb({ auth, db });
 
-    // Listen for auth state updates
     const unsubscribe = onAuthStateChanged(auth, (user) => {
-      if (user) setUserId(user.uid);
-      else setUserId(null);
+      if (user) {
+        setUserId(user.uid);
+      } else {
+        setUserId(null);
+      }
       setIsAuthReady(true);
     });
-
-    // If you have an initial token mechanism, keep it here (optional)
-    // (left intentionally minimal since firebase is already configured)
 
     return () => unsubscribe();
   }, []);
 
-  // ----------------- Load user profile (real-time) -----------------
+  // ----------------- Load user profile -----------------
   useEffect(() => {
     if (!isAuthReady) return;
 
     let unsubscribe = () => {};
 
     if (userId && fb?.db) {
-      // Reference the top-level users collection
       const userDocRef = doc(fb.db, "users", userId);
 
       unsubscribe = onSnapshot(
         userDocRef,
         (snap) => {
-          console.log("Snapshot exists?", snap.exists());
-          console.log("Data:", snap.data());
           if (snap.exists()) {
             const data = snap.data();
+            const photoURL = getUserPhotoURL(data);
+
             setUserData({
-              fullName: data.name || "ضيف جديد", // use 'name' from Firestore
-              photoURL:
-                data.photoURL ||
-                "https://placehold.co/100x100/10b981/ffffff?text=U",
+              uid: userId,
+              email: data.email || auth.currentUser?.email || "",
+              name: data.name || auth.currentUser?.displayName || "ضيف جديد",
+              photoURL: photoURL,
+              createdAt: data.createdAt,
+              lastLogin: data.lastLogin,
+              ...data,
             });
           } else {
-            // document doesn't exist yet
+            const photoURL = generateAvatarUrl("متعلم");
+
             setUserData({
-              fullName: "ضيف جديد",
-              photoURL: "https://placehold.co/100x100/10b981/ffffff?text=U",
+              uid: userId,
+              email: auth.currentUser?.email || "",
+              name: auth.currentUser?.displayName || "ضيف جديد",
+              photoURL: photoURL,
             });
+
+            initializeUserDocument(userId, auth.currentUser);
           }
           setLoading(false);
         },
         (err) => {
-          console.error("profile onSnapshot error:", err);
+          console.error("Error loading user data:", err);
+          handleFirestoreError(err, showToast);
           setUserData({
-            fullName: "مستخدم",
-            photoURL: "https://placehold.co/100x100/333333/ffffff?text=?",
+            uid: userId,
+            name: "مستخدم",
+            photoURL: generateAvatarUrl("متعلم"),
           });
           setLoading(false);
         }
       );
     } else if (isAuthReady && !userId) {
-      // fallback for anonymous/not-signed-in
-      setUserData({
-        fullName: "مستخدم غير معروف",
-        photoURL: "https://placehold.co/100x100/333333/ffffff?text=?",
-      });
+      setUserData(null);
       setLoading(false);
     }
 
-    // Cleanup
     return () => unsubscribe();
-  }, [isAuthReady, userId, fb]);
+  }, [isAuthReady, userId, fb, showToast]);
 
-  // ----------------- Load mock content (games & programs) -----------------
+  // ----------------- Load programs with proper dark mode styling -----------------
   useEffect(() => {
-    // Simulate async load (like fetching from Firestore)
     const loadMockContent = async () => {
-      // In your real implementation, replace this with Firestore reads (getDocs)
-      await new Promise((r) => setTimeout(r, 350)); // small delay for UX
+      await new Promise((r) => setTimeout(r, 350));
 
       const mockPrograms = [
         {
           id: "computer",
           name: "الحاسوب",
           path: "maincomdep",
-
           description: "مسار الحاسوب التفاعلي",
-          icon: <Computer />,
+          icon: <Computer className="text-4xl" />,
+          light: {
+            bg: "bg-gradient-to-br from-white to-blue-50",
+            border: "border-blue-200",
+            iconBg: "bg-blue-100",
+            iconColor: "text-blue-600",
+            button: "from-blue-500 to-blue-600 border-blue-700",
+            text: "text-gray-600",
+          },
+          dark: {
+            bg: "bg-gradient-to-br from-gray-800 via-gray-800 to-blue-900/30",
+            border: "border-blue-500/30",
+            iconBg: "bg-blue-500/20",
+            iconColor: "text-blue-400",
+            button: "from-blue-500 to-blue-600 border-blue-400",
+            text: "text-gray-300",
+          },
         },
         {
           id: "firstaid",
           path: "firstaid",
-
           name: "الإسعافات الأولية",
           description: "أساسيات الإسعاف الأولي",
-          icon: <LocalHospital />,
+          icon: <LocalHospital className="text-4xl" />,
+          light: {
+            bg: "bg-gradient-to-br from-white to-red-50",
+            border: "border-red-200",
+            iconBg: "bg-red-100",
+            iconColor: "text-red-600",
+            button: "from-red-500 to-red-600 border-red-700",
+            text: "text-gray-600",
+          },
+          dark: {
+            bg: "bg-gradient-to-br from-gray-800 via-gray-800 to-red-900/30",
+            border: "border-red-500/30",
+            iconBg: "bg-red-500/20",
+            iconColor: "text-red-400",
+            button: "from-red-500 to-red-600 border-red-400",
+            text: "text-gray-300",
+          },
         },
         {
           id: "math",
           path: "mathdep",
-
           name: "الرياضيات",
           description: "تطوير المهارات الحسابية",
-          icon: <Calculate />,
+          icon: <Calculate className="text-4xl" />,
+          light: {
+            bg: "bg-gradient-to-br from-white to-green-50",
+            border: "border-green-200",
+            iconBg: "bg-green-100",
+            iconColor: "text-green-600",
+            button: "from-green-500 to-green-600 border-green-700",
+            text: "text-gray-600",
+          },
+          dark: {
+            bg: "bg-gradient-to-br from-gray-800 via-gray-800 to-green-900/30",
+            border: "border-green-500/30",
+            iconBg: "bg-green-500/20",
+            iconColor: "text-green-400",
+            button: "from-green-500 to-green-600 border-green-400",
+            text: "text-gray-300",
+          },
         },
         {
           id: "physics",
           path: "physicdep",
           name: "الفيزياء",
           description: "مقدمات في الفيزياء",
-          icon: <Science />,
+          icon: <Science className="text-4xl" />,
+          light: {
+            bg: "bg-gradient-to-br from-white to-purple-50",
+            border: "border-purple-200",
+            iconBg: "bg-purple-100",
+            iconColor: "text-purple-600",
+            button: "from-purple-500 to-purple-600 border-purple-700",
+            text: "text-gray-600",
+          },
+          dark: {
+            bg: "bg-gradient-to-br from-gray-800 via-gray-800 to-purple-900/30",
+            border: "border-purple-500/30",
+            iconBg: "bg-purple-500/20",
+            iconColor: "text-purple-400",
+            button: "from-purple-500 to-purple-600 border-purple-400",
+            text: "text-gray-300",
+          },
         },
       ];
 
@@ -473,7 +774,33 @@ export default function Dashboard() {
     };
 
     loadMockContent();
-  }, []);
+  }, [darkMode]);
+
+  // ----------------- Navigation -----------------
+  const handleOpen = useCallback(
+    (path) => {
+      if (!path) {
+        showToast("المسار غير متاح حالياً.", "info");
+        return;
+      }
+
+      if (!userId || !userData) {
+        showToast("يجب تسجيل الدخول أولاً.", "warning");
+        return;
+      }
+
+      setIsSidebarOpen(false);
+
+      navigate(`/${path}`, {
+        state: {
+          userId,
+          userData,
+          darkMode,
+        },
+      });
+    },
+    [userId, userData, darkMode, navigate, showToast]
+  );
 
   // ----------------- Welcome banner timer & footer observer -----------------
   useEffect(() => {
@@ -509,9 +836,9 @@ export default function Dashboard() {
   };
 
   // ----------------- UI helpers -----------------
-  const toggleTheme = () => setDarkMode((p) => !p);
+  const toggleTheme = useCallback(() => setDarkMode((p) => !p), []);
 
-  // ----------------- Custom styles (keep same as original) -----------------
+  // ----------------- Custom styles -----------------
   const customStyles = `
     @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700;800;900&display=swap');
     .font-\\[Tajawal\\] { font-family: 'Tajawal', sans-serif !important; }
@@ -560,7 +887,7 @@ export default function Dashboard() {
     );
   }
 
-  // ----------------- Sidebar component (inline) -----------------
+  // ----------------- Sidebar component -----------------
   const Sidebar = () => (
     <>
       <div
@@ -573,8 +900,8 @@ export default function Dashboard() {
       <aside
         className={`fixed top-0 right-0 h-full w-64 p-6 z-50 shadow-2xl transform transition-transform duration-300 flex flex-col ${
           darkMode
-            ? "bg-gray-900 text-white border-l border-green-700/50"
-            : "bg-white text-gray-800 border-l border-green-200"
+            ? "bg-gradient-to-b from-gray-900 to-gray-800 text-white border-l border-green-700/50"
+            : "bg-gradient-to-b from-white to-gray-50 text-gray-800 border-l border-green-200"
         } ${isSidebarOpen ? "translate-x-0" : "translate-x-full"}`}
       >
         <div className="flex flex-col mb-6 pb-4 border-b border-green-600/50 flex-shrink-0">
@@ -592,16 +919,16 @@ export default function Dashboard() {
           </div>
 
           <div
-            className="flex items-center gap-3 p-3 rounded-xl bg-gray-800/50 dark:bg-gray-700/50 shadow-inner cursor-pointer hover:shadow-green-500/50 transition-shadow"
+            className="flex items-center gap-3 p-3 rounded-xl bg-gray-800/50 dark:bg-gray-700/50 shadow-inner cursor-pointer hover:shadow-green-500/50 transition-all duration-300"
             onClick={() => setIsModalOpen(true)}
           >
             <Avatar
-              src={userData?.photoURL}
-              alt={userData?.fullName || "U"}
+              src={getUserPhotoURL(userData)}
+              alt={userData?.name || "U"}
               sx={{ width: 48, height: 48, border: "2px solid #4ade80" }}
             />
             <span className="font-extrabold text-lg text-green-300">
-              {userData?.fullName || "مستخدم"}
+              {userData?.name || "مستخدم"}
             </span>
           </div>
         </div>
@@ -626,11 +953,8 @@ export default function Dashboard() {
           {programs.map((p) => (
             <a
               key={p.id}
-              onClick={() => {
-                handleOpen(p.path, auth.currentUser?.uid);
-                setIsSidebarOpen(false);
-              }}
-              className="flex items-center gap-4 text-lg font-medium py-3 px-2 rounded-xl transition-all duration-200 hover:bg-blue-600/30 hover:text-blue-300 hover:shadow-md"
+              onClick={() => handleOpen(p.path)}
+              className="flex items-center gap-4 text-lg font-medium py-3 px-2 rounded-xl transition-all duration-200 hover:bg-blue-600/30 hover:text-blue-300 hover:shadow-md cursor-pointer"
             >
               <span className="text-blue-400">{p.icon}</span>
               {p.name}
@@ -643,6 +967,7 @@ export default function Dashboard() {
             onClick={toggleTheme}
             title="تبديل الثيم"
             className="p-3 rounded-full bg-blue-500/10 hover:bg-blue-500/20"
+            aria-label="تبديل الثيم"
           >
             <Brightness4 className="text-blue-400" />
           </IconButton>
@@ -650,12 +975,14 @@ export default function Dashboard() {
             onClick={handleLogout}
             title="تسجيل الخروج"
             className="p-3 rounded-full bg-red-500/10 hover:bg-red-500/20"
+            aria-label="تسجيل الخروج"
           >
             <Logout className="text-red-400" />
           </IconButton>
           <IconButton
             title="الإشعارات"
             className="p-3 rounded-full bg-yellow-500/10 hover:bg-yellow-500/20"
+            aria-label="الإشعارات"
           >
             <Notifications className="text-yellow-400" />
           </IconButton>
@@ -677,30 +1004,37 @@ export default function Dashboard() {
       >
         <Sidebar />
 
-        {/* Inline ProfileEditModal usage */}
         <ProfileEditModal
           isOpen={isModalOpen}
           onClose={() => setIsModalOpen(false)}
           userData={userData}
           userId={userId}
           fb={fb}
-          appId={"default-app-id"}
           darkMode={darkMode}
           showToast={showToast}
         />
 
         <div className="flex-1 flex flex-col transition-all duration-300">
           <AppBar position="sticky" className={`shadow-2xl`}>
-            <Toolbar className="flex justify-between w-full p-2 sm:p-4 bg-gradient-to-l from-green-600/90 to-blue-600/90 backdrop-blur-sm shadow-xl">
+            <Toolbar
+              className={`flex justify-between w-full ${
+                isMobile ? "p-2" : "p-2 sm:p-4"
+              } bg-gradient-to-l from-green-600/90 to-blue-600/90 backdrop-blur-sm shadow-xl`}
+            >
               <div className="flex items-center gap-3">
                 <IconButton
                   onClick={() => setIsSidebarOpen(true)}
                   color="inherit"
                   title="قائمة التنقل"
+                  aria-label="فتح قائمة التنقل"
                 >
                   <MenuIcon className="text-white hover:scale-110 transition-transform" />
                 </IconButton>
-                <h1 className="text-3xl font-black text-white ml-2 drop-shadow-md">
+                <h1
+                  className={`${
+                    isMobile ? "text-2xl" : "text-3xl"
+                  } font-black text-white ml-2 drop-shadow-md`}
+                >
                   بلــــــيرن
                 </h1>
               </div>
@@ -708,14 +1042,17 @@ export default function Dashboard() {
               <div
                 className="flex items-center gap-3 p-1 rounded-full bg-white/10 pr-4 transition-all duration-300 hover:bg-white/20 cursor-pointer"
                 onClick={() => setIsModalOpen(true)}
+                role="button"
+                tabIndex={0}
+                onKeyPress={(e) => e.key === "Enter" && setIsModalOpen(true)}
               >
                 <Avatar
-                  src={userData?.photoURL}
-                  alt={userData?.fullName || "U"}
+                  src={getUserPhotoURL(userData)}
+                  alt={userData?.name || "U"}
                   sx={{ width: 40, height: 40, border: "2px solid white" }}
                 />
                 <span className="font-extrabold text-white text-base hidden sm:inline drop-shadow">
-                  {userData?.fullName || "مستخدم"}
+                  {userData?.name || "مستخدم"}
                 </span>
               </div>
             </Toolbar>
@@ -723,67 +1060,111 @@ export default function Dashboard() {
 
           <Fade in={showWelcome} timeout={2000}>
             <div className="w-full py-3 text-center text-xl font-black text-white bg-gradient-to-r from-red-500 via-yellow-500 to-purple-500 shadow-2xl">
-              {getGreeting()} 👋 {userData?.fullName || "مستخدم"}!
+              {getGreeting()} 👋 {userData?.name || "مستخدم"}!
             </div>
           </Fade>
 
-          <main className="flex-1 w-full p-4 sm:p-8">
+          <main className="flex-1 w-full p-4 sm:p-6 lg:p-8">
+            {/* Hero Section */}
             <section
               id="hero"
-              className={`py-20 max-w-7xl mx-auto w-full text-center rounded-3xl shadow-2xl mb-12 ${
-                darkMode ? "bg-gray-800/80" : "bg-white/90"
+              className={`${
+                isMobile ? "py-12" : "py-20"
+              } max-w-7xl mx-auto w-full text-center rounded-3xl shadow-2xl mb-8 lg:mb-12 ${
+                darkMode
+                  ? "bg-gradient-to-br from-gray-800 via-gray-800 to-green-900/40"
+                  : "bg-gradient-to-br from-white to-green-50"
+              } border-2 ${
+                darkMode ? "border-green-500/20" : "border-green-200"
               }`}
             >
-              <h2 className="text-6xl font-black mb-4 text-transparent bg-clip-text bg-gradient-to-r from-green-400 to-blue-400 leading-tight drop-shadow-lg">
+              <h2
+                className={`${
+                  isMobile ? "text-4xl" : "text-6xl"
+                } font-black mb-4 text-transparent bg-clip-text bg-gradient-to-r from-green-400 to-blue-400 leading-tight drop-shadow-lg`}
+              >
                 انطلق في رحلة{" "}
                 <span className="text-yellow-400 animate-pulse">التعلم</span>{" "}
                 باللعب!
               </h2>
-              <p className="text-2xl opacity-90 font-medium max-w-3xl mx-auto mb-10 text-gray-300 dark:text-gray-400">
+              <p
+                className={`${
+                  isMobile ? "text-lg" : "text-2xl"
+                } font-medium max-w-3xl mx-auto mb-10 ${
+                  darkMode ? "text-gray-300" : "text-gray-600"
+                }`}
+              >
                 منصة **بلــــــيرن** هي بوابتك نحو تجربة تعليمية ممتعة، حيث
                 يتحول كل درس إلى لعبة مثيرة تطلق العنان لإبداعك.
               </p>
             </section>
 
+            {/* Programs Section */}
             <section
               id="programs-overview"
-              className="py-12 max-w-7xl mx-auto w-full"
+              className="max-w-7xl mx-auto w-full"
             >
-              <h2 className="text-4xl font-black mb-10 text-purple-400 text-center">
+              <h2
+                className={`${
+                  isMobile ? "text-3xl" : "text-4xl"
+                } font-black mb-6 lg:mb-10 text-center ${
+                  darkMode ? "text-purple-400" : "text-purple-600"
+                }`}
+              >
                 برامجنا التعليمية المبتكرة 💡
               </h2>
-              {/* التعديل هنا: lg:grid-cols-4 تم تغييره إلى lg:grid-cols-2 */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
-                {programs.map((p) => (
-                  <Paper
-                    key={p.id}
-                    elevation={10}
-                    id={p.id}
-                    className={`rounded-2xl p-6 transition-all duration-300 hover:scale-[1.05] cursor-pointer shadow-xl border-b-4 ${
-                      darkMode
-                        ? "bg-gray-800 hover:bg-gray-700 border-purple-500"
-                        : "bg-white hover:bg-gray-50 border-purple-400"
-                    }`}
-                  >
-                    <div className="flex flex-col items-center text-center gap-3">
-                      <span className="text-4xl text-purple-400 mb-2 p-3 rounded-full bg-purple-500/10">
-                        {p.icon}
-                      </span>
-                      <h3 className="text-xl font-extrabold text-purple-400">
-                        {p.name}
-                      </h3>
-                      <p className="mt-2 text-sm opacity-80">{p.description}</p>
-                      <button
-                        onClick={() =>
-                          handleOpen(p.path, auth.currentUser?.uid)
-                        }
-                        className="mt-2 py-2 px-6 text-xl rounded-full font-extrabold text-white bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 transition-all duration-300 shadow-xl hover:shadow-2xl active:scale-[0.98] border-b-4 border-green-700"
-                      >
-                        ابداً اللعب الآن
-                      </button>
-                    </div>
-                  </Paper>
-                ))}
+
+              {/* Programs Grid */}
+              <div
+                className={`grid ${
+                  isMobile
+                    ? "grid-cols-1 gap-4"
+                    : "grid-cols-1 md:grid-cols-2 gap-6"
+                }`}
+              >
+                {programs.map((p) => {
+                  const theme = darkMode ? p.dark : p.light;
+                  return (
+                    <Paper
+                      key={p.id}
+                      elevation={darkMode ? 8 : 4}
+                      className={`rounded-2xl p-4 lg:p-6 transition-all duration-300 hover:scale-[1.02] cursor-pointer shadow-lg border-2 ${theme.bg} ${theme.border} hover:shadow-xl group`}
+                    >
+                      <div className="flex flex-col items-center text-center gap-3 lg:gap-4">
+                        {/* Icon with proper styling */}
+                        <div
+                          className={`p-3 lg:p-4 rounded-2xl ${theme.iconBg} group-hover:scale-110 transition-transform duration-300`}
+                        >
+                          <div className={theme.iconColor}>{p.icon}</div>
+                        </div>
+
+                        {/* Content */}
+                        <div className="space-y-2 lg:space-y-3">
+                          <h3
+                            className={`${
+                              isMobile ? "text-lg" : "text-xl"
+                            } font-extrabold ${theme.iconColor}`}
+                          >
+                            {p.name}
+                          </h3>
+                          <p
+                            className={`text-sm leading-relaxed ${theme.text}`}
+                          >
+                            {p.description}
+                          </p>
+                        </div>
+
+                        {/* Action Button */}
+                        <button
+                          onClick={() => handleOpen(p.path)}
+                          className={`mt-2 py-2 lg:py-3 px-6 lg:px-8 w-full rounded-xl font-extrabold text-white bg-gradient-to-r ${theme.button} hover:shadow-2xl transition-all duration-300 border-b-4 hover:scale-105 active:scale-95`}
+                        >
+                          ابدأ التعلم الآن
+                        </button>
+                      </div>
+                    </Paper>
+                  );
+                })}
               </div>
             </section>
           </main>
@@ -792,7 +1173,10 @@ export default function Dashboard() {
             open={toasts.length > 0}
             autoHideDuration={3000}
             onClose={() => setToasts((p) => p.slice(1))}
-            anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
+            anchorOrigin={{
+              vertical: "bottom",
+              horizontal: isMobile ? "center" : "left",
+            }}
           >
             {toasts[0] ? (
               <Alert
@@ -807,24 +1191,28 @@ export default function Dashboard() {
 
           <footer
             ref={sectionRef}
-            className={`relative w-full overflow-hidden py-20 px-4 sm:px-8 transition-all duration-700 ${
+            className={`relative w-full overflow-hidden py-12 lg:py-20 px-4 sm:px-6 lg:px-8 transition-all duration-700 ${
               darkMode
-                ? "bg-gray-900 text-white"
+                ? "bg-gradient-to-b from-gray-900 to-gray-800 text-white"
                 : "bg-gradient-to-b from-gray-50 to-gray-100 text-gray-800"
             }`}
           >
-            <div className="relative z-10 max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-10">
+            <div className="relative z-10 max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-8 lg:gap-10">
               <div>
-                <h2 className="text-4xl font-extrabold mb-4 text-green-500">
+                <h2 className="text-3xl lg:text-4xl font-extrabold mb-4 text-green-500">
                   <span className="inline-block animate-bounce-slow">
                     بلــــــيرن
                   </span>
                 </h2>
-                <p className="mb-6 leading-relaxed text-base opacity-90">
+                <p
+                  className={`mb-6 leading-relaxed text-base ${
+                    darkMode ? "text-gray-400" : "text-gray-600"
+                  }`}
+                >
                   منصة تعليمية تفاعلية مبتكرة تقدم تجربة تعلم عبر الألعاب مصممة
                   لتنمية مهاراتك بطريقة إبداعية.
                 </p>
-                <div className="flex gap-4 mt-4 flex-wrap">
+                <div className="flex gap-3 lg:gap-4 mt-4 flex-wrap">
                   {[
                     {
                       icon: "https://cdn-icons-png.flaticon.com/512/733/733585.png",
@@ -870,30 +1258,36 @@ export default function Dashboard() {
               </div>
 
               <div>
-                <h3 className="text-2xl font-bold mb-4 text-green-500">
+                <h3 className="text-xl lg:text-2xl font-bold mb-4 text-green-500">
                   روابط سريعة
                 </h3>
                 <ul className="space-y-3 text-base">
-                  <li className="opacity-80">
+                  <li>
                     <a
                       href="#hero"
-                      className="hover:text-green-400 transition-colors"
+                      className={`hover:text-green-400 transition-colors ${
+                        darkMode ? "text-gray-400" : "text-gray-600"
+                      }`}
                     >
                       العودة إلى الأعلى
                     </a>
                   </li>
-                  <li className="opacity-80">
+                  <li>
                     <a
-                      href="#games"
-                      className="hover:text-green-400 transition-colors"
+                      href="#programs-overview"
+                      className={`hover:text-green-400 transition-colors ${
+                        darkMode ? "text-gray-400" : "text-gray-600"
+                      }`}
                     >
-                      استعراض الألعاب
+                      استعراض البرامج
                     </a>
                   </li>
-                  <li className="opacity-80">
+                  <li>
                     <a
                       href="#about"
-                      className="hover:text-green-400 transition-colors"
+                      className={`hover:text-green-400 transition-colors ${
+                        darkMode ? "text-gray-400" : "text-gray-600"
+                      }`}
                     >
                       حول بليرن
                     </a>
@@ -902,10 +1296,14 @@ export default function Dashboard() {
               </div>
 
               <div>
-                <h3 className="text-2xl font-bold mb-4 text-green-500">
+                <h3 className="text-xl lg:text-2xl font-bold mb-4 text-green-500">
                   تواصل معنا
                 </h3>
-                <p className="text-base">
+                <p
+                  className={`text-base ${
+                    darkMode ? "text-gray-400" : "text-gray-600"
+                  }`}
+                >
                   نحن هنا للإجابة على جميع استفساراتك.
                 </p>
                 <p className="mt-2 text-green-400 font-semibold">
@@ -915,14 +1313,24 @@ export default function Dashboard() {
               </div>
             </div>
 
-            <div className="mt-16 border-t border-gray-300 dark:border-gray-700 pt-6 text-center space-y-2 text-sm">
-              <p className="text-base font-semibold">
+            <div
+              className={`mt-12 lg:mt-16 border-t ${
+                darkMode ? "border-gray-700" : "border-gray-300"
+              } pt-6 text-center space-y-2 text-sm`}
+            >
+              <p
+                className={`text-base font-semibold ${
+                  darkMode ? "text-gray-400" : "text-gray-600"
+                }`}
+              >
                 © 2025 بلــــــيرن. جميع الحقوق محفوظة.
               </p>
               <div className="flex justify-center gap-6 mt-2">
                 <a
                   href="#privacy"
-                  className="hover:text-green-400 transition-colors"
+                  className={`hover:text-green-400 transition-colors ${
+                    darkMode ? "text-gray-400" : "text-gray-600"
+                  }`}
                 >
                   سياسة الخصوصية
                 </a>

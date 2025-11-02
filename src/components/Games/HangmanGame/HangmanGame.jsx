@@ -13,7 +13,6 @@ import {
 } from "@mui/material";
 import { Brightness4, ArrowBack } from "@mui/icons-material";
 import "./HangmanGame.css";
-import logoImg from "../../assets/logo/logo.png";
 
 const QUIZ = [
   {
@@ -208,12 +207,12 @@ export default function HangmanGame() {
     >
       <audio
         ref={successAudioRef}
-        src="/../public/sound/correct.mp3"
+        src="/../../public/sound/correct.mp3"
         preload="auto"
       />
       <audio
         ref={wrongAudioRef}
-        src="/../public/sound/wrong.mp3"
+        src="/../../public/sound/wrong.mp3"
         preload="auto"
       />
 

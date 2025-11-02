@@ -6,128 +6,63 @@ import "react-toastify/dist/ReactToastify.css";
 import {
   createUserWithEmailAndPassword,
   GoogleAuthProvider,
-  getRedirectResult,
-  signInWithRedirect,
+  signInWithPopup,
+  updatePassword,
 } from "firebase/auth";
-import { doc, setDoc } from "firebase/firestore";
+import { doc, setDoc, getDoc } from "firebase/firestore";
 import logo from "../../assets/logo/logo.png";
 
 const RegisterForm = () => {
-  const [success, setSuccess] = useState(false);
-  const [hasSubmitted, setHasSubmitted] = useState(false);
-  const navigate = useNavigate();
+  const [formState, setFormState] = useState({
+    fullName: "",
+    email: "",
+    username: "",
+    password: "",
+    confirmPassword: "",
+    agree: false,
+  });
+  const [googleSetPasswordMode, setGoogleSetPasswordMode] = useState(false);
+  const [googleUser, setGoogleUser] = useState(null);
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [passwordMatch, setPasswordMatch] = useState(true);
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  const navigate = useNavigate();
   const location = useLocation();
   const { email: preEmail = "", password: prePassword = "" } =
     location.state || {};
-  const [error, setError] = useState("");
-  const [formState, setFormState] = useState({
-    fullName: "",
-    email: preEmail,
-    username: "",
-    password: prePassword,
-    confirmPassword: "",
-    gender: "",
-    agree: false,
-  });
-  const [errors, setErrors] = useState({});
 
   const style =
-    "w-full px-4 py-3 rounded-xl border border-gray-300 dark:border-gray-700 text-right placeholder:text-gray-400 dark:bg-gray-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-green-400";
+    "w-full px-4 py-3 rounded-xl border border-gray-300 text-right placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-green-400";
 
-  const showSuccess = (msg) => toast.success(msg);
-  const showError = (msg) => toast.error(msg);
-  const resetFeedback = () => {
-    setError("");
-    setErrors({});
-    setSuccess(false);
-  };
+  // Real-time password match check
+  useEffect(() => {
+    setPasswordMatch(newPassword === confirmPassword);
+  }, [newPassword, confirmPassword]);
 
-  function handleChange(e) {
-    const { name, type, value, checked } = e.target;
+  const handleChange = (e) => {
+    const { name, value, type, checked } = e.target;
     setFormState((prev) => ({
       ...prev,
       [name]: type === "checkbox" ? checked : value,
     }));
-    setErrors((prev) => ({ ...prev, [name]: undefined }));
-  }
-
-  useEffect(() => {
-    const handleRedirectResult = async () => {
-      try {
-        const result = await getRedirectResult(auth);
-        if (!result?.user) return;
-        const user = result.user;
-
-        await setDoc(
-          doc(db, "users", user.uid),
-          {
-            name: user.displayName,
-            photoURL: user.photoURL,
-            provider: "google",
-            gender: "",
-            agree: true,
-            lastLogin: Date.now(),
-          },
-          { merge: true }
-        );
-
-        setSuccess(true);
-        showSuccess("✅ تم تسجيل الدخول باستخدام Google بنجاح! سيتم تحويلك...");
-        setTimeout(() => navigate("/login"), 3000);
-      } catch (err) {
-        if (err.code !== "auth/no-auth-event") {
-          console.error(err);
-          showError("❌ فشل إتمام تسجيل الدخول باستخدام Google.");
-        }
-      }
-    };
-    handleRedirectResult();
-  }, [navigate]);
-
-  const handleFirebaseError = (err) => {
-    console.error("Firebase Error:", err);
-    let message = "❌ حدث خطأ غير متوقع. حاول مرة أخرى.";
-
-    switch (err.code) {
-      case "auth/email-already-in-use":
-        message = "❌ هذا البريد الإلكتروني مستخدم بالفعل.";
-        break;
-      case "auth/invalid-email":
-        message = "❌ البريد الإلكتروني غير صالح.";
-        break;
-      case "auth/weak-password":
-        message = "❌ كلمة المرور ضعيفة جدًا. استخدم 6 أحرف على الأقل.";
-        break;
-      case "auth/operation-not-allowed":
-        message = "❌ التسجيل باستخدام البريد الإلكتروني غير مفعل.";
-        break;
-      default:
-        message = "❌ حدث خطأ أثناء إنشاء الحساب.";
-    }
-
-    setError(message);
-    showError(message);
   };
 
+  const showSuccess = (msg) => toast.success(msg, { autoClose: 3000 });
+  const showError = (msg) => toast.error(msg, { autoClose: 3000 });
+
+  // Regular Email/Password registration
   const handleSubmit = async (e) => {
     e.preventDefault();
-    resetFeedback();
-    setHasSubmitted(true);
     setLoading(true);
 
-    const {
-      email,
-      password,
-      confirmPassword,
-      username,
-      fullName,
-      gender,
-      agree,
-    } = formState;
+    const { fullName, email, username, password, confirmPassword, agree } =
+      formState;
 
     if (password !== confirmPassword) {
-      setErrors({ confirmPassword: "كلمات المرور غير متطابقة." });
+      showError("❌ كلمات المرور غير متطابقة.");
       setLoading(false);
       return;
     }
@@ -139,190 +74,270 @@ const RegisterForm = () => {
         password
       );
       const user = userCredential.user;
+      const userRef = doc(db, "users", user.uid);
 
-      await setDoc(
-        doc(db, "users", user.uid),
-        {
-          fullName,
-          username,
-          gender,
-          agree,
-          provider: "email",
-          email,
-          lastLogin: Date.now(),
-        },
-        { merge: true }
-      );
+      await setDoc(userRef, {
+        fullName,
+        username,
+        email,
+        provider: "email",
+        agree,
+        lastLogin: Date.now(),
+      });
 
-      setSuccess(true);
-      showSuccess(
-        "✅ تم إنشاء الحساب بنجاح! سيتم تحويلك إلى صفحة تسجيل الدخول..."
-      );
+      showSuccess("✅ تم إنشاء الحساب بنجاح! سيتم تحويلك إلى تسجيل الدخول...");
       setTimeout(
         () => navigate("/login", { state: { email, password } }),
         3000
       );
     } catch (err) {
-      handleFirebaseError(err);
+      console.error(err);
+      let message = "❌ حدث خطأ أثناء إنشاء الحساب.";
+      switch (err.code) {
+        case "auth/email-already-in-use":
+          message = "❌ هذا البريد الإلكتروني مستخدم بالفعل.";
+          break;
+        case "auth/invalid-email":
+          message = "❌ البريد الإلكتروني غير صالح.";
+          break;
+        case "auth/weak-password":
+          message = "❌ كلمة المرور ضعيفة جدًا. استخدم 6 أحرف على الأقل.";
+          break;
+        case "auth/operation-not-allowed":
+          message = "❌ إنشاء الحساب باستخدام البريد الإلكتروني غير مفعل.";
+          break;
+      }
+      showError(message);
     } finally {
       setLoading(false);
     }
   };
 
+  // Google registration/login
   const handleGoogle = async () => {
-    resetFeedback();
     setLoading(true);
-
     try {
       const provider = new GoogleAuthProvider();
-      provider.setCustomParameters({ prompt: "consent" });
-      await signInWithRedirect(auth, provider);
+      provider.setCustomParameters({ prompt: "select_account" });
+
+      const result = await signInWithPopup(auth, provider);
+      const user = result.user;
+      const userRef = doc(db, "users", user.uid);
+      const userSnap = await getDoc(userRef);
+
+      if (!userSnap.exists() || !userSnap.data().passwordSet) {
+        if (!userSnap.exists()) {
+          await setDoc(userRef, {
+            fullName: user.displayName || "",
+            username: user.displayName
+              ? user.displayName.replace(/\s+/g, "")
+              : "",
+            email: user.email || "",
+            provider: "google",
+            agree: true,
+            lastLogin: Date.now(),
+          });
+        } else {
+          await setDoc(
+            userRef,
+            { lastLogin: Date.now(), provider: "google" },
+            { merge: true }
+          );
+        }
+        setGoogleUser(user);
+        setGoogleSetPasswordMode(true);
+      } else {
+        showSuccess("✅ تم تسجيل الدخول بنجاح!");
+        setTimeout(() => navigate("/login"), 2000);
+      }
     } catch (err) {
       console.error(err);
-      showError("❌ فشل بدء تسجيل الدخول باستخدام Google.");
+      showError("❌ فشل تسجيل الدخول باستخدام Google.");
+    } finally {
       setLoading(false);
     }
   };
 
-  return (
-    <>
+  const handleSetPassword = async (e) => {
+    e.preventDefault();
+    if (!googleUser || !passwordMatch) return;
+
+    setLoading(true);
+    try {
+      await updatePassword(googleUser, newPassword);
+      await setDoc(
+        doc(db, "users", googleUser.uid),
+        { passwordSet: true, lastLogin: Date.now() },
+        { merge: true }
+      );
+      showSuccess("✅ تم إضافة كلمة المرور بنجاح!");
+      setGoogleSetPasswordMode(false);
+      setTimeout(() => navigate("/login"), 2000);
+    } catch (err) {
+      console.error(err);
+      showError("❌ فشل إضافة كلمة المرور. حاول مرة أخرى.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (googleSetPasswordMode) {
+    return (
       <div
-        className="relative min-h-screen bg-gray-100 font-[Tajawal]"
+        className="min-h-screen bg-gray-100 flex items-center justify-center px-4 sm:px-6 md:px-8 lg:px-12 font-[Tajawal]"
         dir="rtl"
         lang="ar"
       >
-        {/* Animated background */}
-        <div className="absolute inset-0 -z-10 overflow-hidden">
-          {[...Array(12)].map((_, i) => (
-            <div
-              key={i}
-              className="absolute w-2 h-2 bg-blue-300 rounded-full animate-pulse"
-              style={{
-                top: `${Math.random() * 100}%`,
-                left: `${Math.random() * 100}%`,
-                animationDelay: `${Math.random() * 5}s`,
-                animationDuration: `${4 + Math.random() * 4}s`,
-              }}
+        <div className="w-full max-w-sm bg-white rounded-2xl shadow-xl p-6">
+          <h2 className="text-xl font-bold mb-4 text-center text-gray-800">
+            إضافة كلمة مرور جديدة
+          </h2>
+          <form onSubmit={handleSetPassword} className="space-y-4">
+            <input
+              type="password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              placeholder="أدخل كلمة المرور الجديدة"
+              required
+              className={style}
             />
-          ))}
+            <input
+              type="password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              placeholder="تأكيد كلمة المرور"
+              required
+              className={`${style} ${!passwordMatch ? "border-red-500" : ""}`}
+            />
+            {!passwordMatch && (
+              <p className="text-red-500 text-sm text-center">
+                ❌ كلمة المرور غير متطابقة
+              </p>
+            )}
+            <button
+              type="submit"
+              disabled={loading || !passwordMatch}
+              className={`w-full py-3 bg-green-500 text-white font-bold rounded-full transition-all duration-300 ${
+                loading || !passwordMatch ? "opacity-50 cursor-not-allowed" : ""
+              }`}
+            >
+              {loading ? "جاري الحفظ..." : "حفظ كلمة المرور"}
+            </button>
+          </form>
         </div>
+      </div>
+    );
+  }
 
-        {/* Form container */}
+  return (
+    <>
+      <div
+        className="min-h-screen bg-gray-100 font-[Tajawal]"
+        dir="rtl"
+        lang="ar"
+      >
         <div className="flex items-center justify-center sm:px-6 md:px-8 lg:px-12 min-h-[70vh]">
-          <div className="w-full sm:w-[100%] md:w-[80%] lg:w-[60%] max-w-2xl bg-white rounded-2xl shadow-xl p-2 sm:p-6 md:p-6 lg:p-8 xl:p-10 my-10 sm:my-6 md:my-10 lg:my-14">
+          <div className="w-full sm:w-[100%] md:w-[80%] lg:w-[60%] max-w-2xl bg-white rounded-2xl shadow-xl p-6 my-10">
             <Link to="/main">
               <img
                 src={logo}
-                alt="plrn Logo"
+                alt="Logo"
                 className="w-20 mx-auto mb-4 cursor-pointer"
               />
             </Link>
 
-            <h2 className="flex flex-wrap justify-center items-center text-xl sm:text-2xl md:text-3xl font-bold mb-6 text-gray-800 gap-1">
+            <h2 className="text-xl sm:text-2xl md:text-3xl font-bold mb-6 text-gray-800 text-center">
               إنشاء <span className="text-green-500">حساب</span> جديد
             </h2>
 
-            {success && (
-              <div className="text-green-600 text-center font-bold text-lg mb-4">
-                تم إنشاء الحساب بنجاح!...
-              </div>
-            )}
-
-            <form onSubmit={handleSubmit}>
-              <div className="space-y-4 mb-6">
-                <input
-                  name="fullName"
-                  value={formState.fullName}
-                  onChange={handleChange}
-                  type="text"
-                  placeholder="الاسم الكامل"
-                  required
-                  className={style}
-                />
-                <input
-                  name="email"
-                  value={formState.email}
-                  onChange={handleChange}
-                  type="email"
-                  placeholder="البريد الإلكتروني"
-                  required
-                  className={style}
-                />
-                <input
-                  name="username"
-                  value={formState.username}
-                  onChange={handleChange}
-                  type="text"
-                  placeholder="اسم المستخدم"
-                  required
-                  className={style}
-                />
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <input
+                name="fullName"
+                value={formState.fullName}
+                onChange={handleChange}
+                type="text"
+                placeholder="الاسم الكامل"
+                required
+                className={style}
+              />
+              <input
+                name="email"
+                value={formState.email}
+                onChange={handleChange}
+                type="email"
+                placeholder="البريد الإلكتروني"
+                required
+                className={style}
+              />
+              <input
+                name="username"
+                value={formState.username}
+                onChange={handleChange}
+                type="text"
+                placeholder="اسم المستخدم"
+                required
+                className={style}
+              />
+              <div className="relative">
                 <input
                   name="password"
                   value={formState.password}
                   onChange={handleChange}
-                  type="password"
+                  type={showPassword ? "text" : "password"}
                   placeholder="كلمة المرور"
                   required
-                  className={style}
+                  className={style + " pr-10"}
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((prev) => !prev)}
+                  className="absolute top-1/2 right-3 -translate-y-1/2 text-gray-500 hover:text-gray-700"
+                >
+                  {showPassword ? "🙈" : "👁️"}
+                </button>
+              </div>
+              <div className="relative">
                 <input
                   name="confirmPassword"
                   value={formState.confirmPassword}
                   onChange={handleChange}
-                  type="password"
+                  type={showPassword ? "text" : "password"}
                   placeholder="تأكيد كلمة المرور"
                   required
-                  className={style}
+                  className={style + " pr-10"}
                 />
-                <select
-                  name="gender"
-                  value={formState.gender}
+              </div>
+
+              <div className="flex items-center gap-2 text-sm">
+                <input
+                  id="terms"
+                  name="agree"
+                  type="checkbox"
+                  checked={formState.agree}
                   onChange={handleChange}
                   required
-                  className={style}
-                >
-                  <option value="">اختر الجنس</option>
-                  <option value="male">ذكر</option>
-                  <option value="female">أنثى</option>
-                </select>
-                <div className="flex items-center gap-2 text-sm text-gray-600">
-                  <input
-                    id="terms"
-                    name="agree"
-                    type="checkbox"
-                    checked={formState.agree}
-                    onChange={handleChange}
-                    required
-                    className="accent-green-500"
-                  />
-                  <label
-                    htmlFor="terms"
-                    className="flex items-center gap-1 text-[16px] font-bold"
-                  >
-                    أوافق على{" "}
-                    <a
-                      href="/terms"
-                      className="text-[#22c55e] hover:text-[#1565c0] font-bold"
-                    >
-                      الشروط والأحكام
-                    </a>
-                  </label>
-                </div>
+                  className="accent-green-500"
+                />
+                <label htmlFor="terms">
+                  أوافق على{" "}
+                  <a href="/terms" className="text-green-500">
+                    الشروط والأحكام
+                  </a>
+                </label>
               </div>
 
               <button
                 type="submit"
                 disabled={loading}
-                className={`w-full py-3 bg-green-500 text-white font-bold rounded-full transition-all duration-300 hover:bg-green-600 hover:scale-[1.02] ${
+                className={`w-full py-3 bg-green-500 text-white font-bold rounded-full transition-all duration-300 ${
                   loading ? "opacity-50 cursor-not-allowed" : ""
                 }`}
               >
                 {loading ? "جارٍ الإنشاء..." : "إنشاء الحساب"}
               </button>
 
-              <div className="relative text-center my-4">
-                <span className="bg-white px-4 text-gray-500 z-10 relative">
+              <div className="text-center my-4 relative">
+                <span className="bg-white px-4 text-gray-500 relative z-10">
                   أو
                 </span>
                 <div className="absolute top-1/2 left-0 right-0 h-px bg-gray-300 -z-0" />
@@ -331,36 +346,26 @@ const RegisterForm = () => {
               <button
                 type="button"
                 onClick={handleGoogle}
-                className="w-full flex items-center justify-center gap-2 py-3 border border-gray-300 rounded-full bg-white transition-all duration-300 hover:shadow-lg hover:scale-[1.02]"
+                className="w-full flex items-center justify-center gap-2 py-3 border border-gray-300 rounded-full bg-white"
               >
                 <img
                   src="https://www.svgrepo.com/show/475656/google-color.svg"
                   alt="Google logo"
                   className="w-5 h-5"
                 />
-                <span className="text-sm font-medium text-gray-700">
-                  المتابعة باستخدام Google
-                </span>
+                المتابعة باستخدام Google
               </button>
 
-              <div className="flex flex-wrap items-center justify-center gap-2 text-[16px] text-gray-600 font-bold mt-4">
-                <div className="whitespace-nowrap">لديك حساب بالفعل؟</div>
-                <a
-                  href="/login"
-                  className="text-[#22c55e] hover:text-[#1565c0] font-bold"
-                >
+              <div className="flex justify-center gap-2 mt-4">
+                لديك حساب بالفعل؟{" "}
+                <Link to="/login" className="text-green-500">
                   تسجيل الدخول
-                </a>
+                </Link>
               </div>
             </form>
           </div>
         </div>
       </div>
-
-      {hasSubmitted && error && (
-        <div className="text-red-500 text-sm mt-2 text-center">{error}</div>
-      )}
-
       <ToastContainer position="top-center" autoClose={3000} />
     </>
   );
