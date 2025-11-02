@@ -1,4 +1,4 @@
-// MainComDep.jsx - COMPLETELY FIXED VERSION
+// MainComDep.jsx - UPDATED UI LAYOUT
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Avatar, Button, useMediaQuery, useTheme } from "@mui/material";
@@ -14,6 +14,7 @@ import {
   Lock,
   LockOpen,
   MilitaryTech,
+  Refresh,
 } from "@mui/icons-material";
 import Leaderboard from "./../LeaderboardComp/LeaderBoard";
 import {
@@ -52,6 +53,12 @@ export default function MainComDep() {
   const [unlockedUnits, setUnlockedUnits] = useState([0]);
   const [userScore, setUserScore] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
+  const [gameScores, setGameScores] = useState({});
+
+  // 🎯 Refs to prevent unnecessary re-renders
+  const progressDataRef = useRef([]);
+  const gameScoresRef = useRef({});
+  const isInitializedRef = useRef(false);
 
   // 🎯 Memoized data definitions
   const { lessonsData, announcementsData, gamesData } = useMemo(
@@ -202,7 +209,7 @@ export default function MainComDep() {
     []
   );
 
-  // 🎯 Initialize progress data
+  // 🎯 Initialize progress data structure
   const getInitialProgressData = useCallback(() => {
     return [
       {
@@ -214,6 +221,7 @@ export default function MainComDep() {
         requiredScore: 0,
         totalScore: 0,
         completedGames: 0,
+        totalGames: 2, // dragDrop + hangman
         maxPossibleScore: 200,
       },
       {
@@ -225,6 +233,7 @@ export default function MainComDep() {
         requiredScore: 30,
         totalScore: 0,
         completedGames: 0,
+        totalGames: 2, // flowchartgame + algorithm-shapes
         maxPossibleScore: 200,
       },
       {
@@ -236,6 +245,7 @@ export default function MainComDep() {
         requiredScore: 60,
         totalScore: 0,
         completedGames: 0,
+        totalGames: 1, // compiler-journey
         maxPossibleScore: 100,
       },
       {
@@ -247,6 +257,7 @@ export default function MainComDep() {
         requiredScore: 90,
         totalScore: 0,
         completedGames: 0,
+        totalGames: 1, // scratch-lab
         maxPossibleScore: 100,
       },
     ];
@@ -276,7 +287,7 @@ export default function MainComDep() {
     [unlockedUnits]
   );
 
-  // 🎯 Calculate total progress
+  // 🎯 Calculate total progress from all units
   const getTotalProgress = useCallback(() => {
     if (progressData.length === 0) return 0;
     const totalPercentage = progressData.reduce(
@@ -321,20 +332,21 @@ export default function MainComDep() {
     try {
       const scoresCollection = collection(db, "users", userData.uid, "scores");
       const scoresSnapshot = await getDocs(scoresCollection);
-      const gameScores = {};
+      const scores = {};
 
       scoresSnapshot.forEach((doc) => {
         const data = doc.data();
-        gameScores[data.gameId] = {
+        scores[data.gameId] = {
           score: data.score || 0,
           completed: data.completed || false,
           lastPlayed: data.lastPlayed,
           unitId: data.unitId,
+          points: data.points || 0,
         };
       });
 
-      console.log("🎮 Loaded individual game scores:", gameScores);
-      return gameScores;
+      console.log("🎮 Loaded individual game scores:", scores);
+      return scores;
     } catch (error) {
       console.error("❌ Error loading individual game scores:", error);
       return {};
@@ -389,8 +401,13 @@ export default function MainComDep() {
       }
     });
 
-    console.log("🔓 Unlocked units:", unlocked);
+    console.log("🔓 Calculated unlocked units:", unlocked);
     return unlocked;
+  }, []);
+
+  // 🎯 Calculate total user score from all units
+  const calculateTotalUserScore = useCallback((progressData) => {
+    return progressData.reduce((sum, unit) => sum + (unit.totalScore || 0), 0);
   }, []);
 
   // 🎯 Recalculate all progress from individual game scores
@@ -398,12 +415,12 @@ export default function MainComDep() {
     console.log("🔄 Starting progress recalculation...");
 
     try {
-      const gameScores = await loadIndividualGameScores();
+      const currentGameScores = await loadIndividualGameScores();
       const initialProgress = getInitialProgressData();
 
       // Calculate progress for each unit
       const updatedProgress = initialProgress.map((unit) => {
-        const unitProgress = calculateUnitProgress(unit, gameScores);
+        const unitProgress = calculateUnitProgress(unit, currentGameScores);
 
         return {
           ...unit,
@@ -416,16 +433,12 @@ export default function MainComDep() {
       });
 
       // Calculate total user score
-      const newTotalScore = updatedProgress.reduce(
-        (sum, unit) => sum + (unit.totalScore || 0),
-        0
-      );
-
-      console.log("💰 Recalculated total score:", newTotalScore);
+      const newTotalScore = calculateTotalUserScore(updatedProgress);
 
       // Update unlocked units
       const newUnlockedUnits = calculateUnlockedUnits(updatedProgress);
 
+      console.log("💰 Recalculated total score:", newTotalScore);
       console.log("📊 Final progress data:", updatedProgress);
       console.log("🔓 Final unlocked units:", newUnlockedUnits);
 
@@ -433,8 +446,18 @@ export default function MainComDep() {
       setProgressData(updatedProgress);
       setUserScore(newTotalScore);
       setUnlockedUnits(newUnlockedUnits);
+      setGameScores(currentGameScores);
 
-      return { updatedProgress, newTotalScore, newUnlockedUnits };
+      // Update refs
+      progressDataRef.current = updatedProgress;
+      gameScoresRef.current = currentGameScores;
+
+      return {
+        updatedProgress,
+        newTotalScore,
+        newUnlockedUnits,
+        gameScores: currentGameScores,
+      };
     } catch (error) {
       console.error("❌ Error recalculating progress:", error);
       throw error;
@@ -443,6 +466,7 @@ export default function MainComDep() {
     loadIndividualGameScores,
     getInitialProgressData,
     calculateUnitProgress,
+    calculateTotalUserScore,
     calculateUnlockedUnits,
   ]);
 
@@ -460,11 +484,11 @@ export default function MainComDep() {
       const leaderboardRef = doc(db, "leaderboard", userData.uid);
 
       const totalProgress = getTotalProgress();
-      const completedGames = progressData.reduce(
+      const completedGames = progressDataRef.current.reduce(
         (count, unit) => count + (unit.completedGames || 0),
         0
       );
-      const completedUnits = progressData.filter(
+      const completedUnits = progressDataRef.current.filter(
         (unit) => unit.completed
       ).length;
 
@@ -488,6 +512,8 @@ export default function MainComDep() {
           photoURL: userData.photoURL,
           totalScore: userScore,
           totalProgress: totalProgress,
+          completedGames: completedGames,
+          completedUnits: completedUnits,
           lastUpdated: serverTimestamp(),
         },
         { merge: true }
@@ -497,7 +523,7 @@ export default function MainComDep() {
       batch.set(
         progressRef,
         {
-          progressData: progressData,
+          progressData: progressDataRef.current,
           unlockedUnits: unlockedUnits,
           totalProgress: totalProgress,
           lastUpdated: serverTimestamp(),
@@ -537,7 +563,7 @@ export default function MainComDep() {
     } catch (error) {
       console.error("❌ Error saving to Firestore:", error);
     }
-  }, [userData, progressData, userScore, unlockedUnits, getTotalProgress]);
+  }, [userData, userScore, unlockedUnits, getTotalProgress]);
 
   // 🎯 Update game progress and scores
   const updateGameProgress = useCallback(
@@ -578,13 +604,29 @@ export default function MainComDep() {
           console.log("✅ Individual score saved for", gameId);
         }
 
-        // Always recalculate to ensure consistency
+        // Recalculate all progress to reflect changes
         await recalculateAllProgress();
       } catch (error) {
         console.error("❌ Error in updateGameProgress:", error);
       }
     },
     [userData?.uid, recalculateAllProgress]
+  );
+
+  // 🎯 Get game score for display
+  const getGameScore = useCallback(
+    (gameId) => {
+      return gameScores[gameId]?.score || 0;
+    },
+    [gameScores]
+  );
+
+  // 🎯 Check if game is completed
+  const isGameCompleted = useCallback(
+    (gameId) => {
+      return gameScores[gameId]?.completed || false;
+    },
+    [gameScores]
   );
 
   // 🎯 Game completion handler
@@ -623,9 +665,12 @@ export default function MainComDep() {
     return () => window.removeEventListener("message", handleGameCompletion);
   }, [location.state, navigate, updateGameProgress]);
 
-  // 🎯 Initialize progress system
+  // 🎯 Initialize progress system - RUNS ONLY ONCE
   useEffect(() => {
     const initializeProgress = async () => {
+      if (isInitializedRef.current) return;
+      isInitializedRef.current = true;
+
       console.log("🚀 Initializing progress system...");
 
       if (!userData?.uid) {
@@ -635,6 +680,9 @@ export default function MainComDep() {
         setUnlockedUnits([0]);
         setUserScore(0);
         setIsLoading(false);
+
+        // Update refs
+        progressDataRef.current = initialProgress;
         return;
       }
 
@@ -656,6 +704,10 @@ export default function MainComDep() {
           );
           setUnlockedUnits(progressData.unlockedUnits || [0]);
 
+          // Update refs
+          progressDataRef.current =
+            progressData.progressData || getInitialProgressData();
+
           // Load user score
           const scoresRef = doc(db, "users", userData.uid, "scores", "overall");
           const scoresSnap = await getDoc(scoresRef);
@@ -663,6 +715,11 @@ export default function MainComDep() {
             const scoresData = scoresSnap.data();
             setUserScore(scoresData.totalScore || 0);
           }
+
+          // Load individual game scores
+          const gameScoresData = await loadIndividualGameScores();
+          setGameScores(gameScoresData);
+          gameScoresRef.current = gameScoresData;
         } else {
           console.log("📝 No existing progress, creating new...");
           // No existing progress, create new
@@ -675,70 +732,102 @@ export default function MainComDep() {
         setProgressData(initialProgress);
         setUnlockedUnits([0]);
         setUserScore(0);
+
+        // Update refs
+        progressDataRef.current = initialProgress;
       }
 
       setIsLoading(false);
     };
 
     initializeProgress();
-  }, [userData?.uid, getInitialProgressData, recalculateAllProgress]);
+  }, [
+    userData?.uid,
+    getInitialProgressData,
+    recalculateAllProgress,
+    loadIndividualGameScores,
+  ]);
 
   // 🎯 Save to Firebase when data changes
   useEffect(() => {
     if (isLoading || !userData?.uid || progressData.length === 0) return;
 
-    console.log("🔄 Data changed, saving to Firebase...");
-    saveProgressToFirebase();
+    // Only save if data actually changed
+    const shouldSave =
+      JSON.stringify(progressData) !==
+        JSON.stringify(progressDataRef.current) ||
+      JSON.stringify(gameScores) !== JSON.stringify(gameScoresRef.current);
+
+    if (shouldSave) {
+      console.log("🔄 Data changed, saving to Firebase...");
+
+      // Update refs first
+      progressDataRef.current = progressData;
+      gameScoresRef.current = gameScores;
+
+      saveProgressToFirebase();
+    }
   }, [
     progressData,
     userScore,
     unlockedUnits,
+    gameScores,
     userData?.uid,
     isLoading,
     saveProgressToFirebase,
   ]);
 
-  // 🎯 REAL-TIME Firestore listeners
+  // 🎯 REAL-TIME Firestore listeners for game scores
   useEffect(() => {
     if (!userData?.uid) return;
 
-    console.log("👂 Setting up real-time listeners for user:", userData.uid);
-
-    const progressRef = doc(db, "users", userData.uid, "progress", "main");
-    const overallRef = doc(db, "users", userData.uid, "scores", "overall");
-
-    const unsubProgress = onSnapshot(
-      progressRef,
-      (snap) => {
-        if (snap.exists()) {
-          const data = snap.data();
-          console.log("📊 Real-time progress update:", data);
-
-          setProgressData(data.progressData || []);
-          setUnlockedUnits(data.unlockedUnits || [0]);
-        }
-      },
-      (err) => console.error("Progress snapshot error:", err)
+    console.log(
+      "👂 Setting up real-time game scores listener for user:",
+      userData.uid
     );
 
-    const unsubOverall = onSnapshot(
-      overallRef,
-      (snap) => {
-        if (snap.exists()) {
-          const data = snap.data();
-          const newScore = data.totalScore || 0;
-          console.log("💰 Real-time score update:", newScore);
-          setUserScore(newScore);
+    const scoresCollection = collection(db, "users", userData.uid, "scores");
+
+    const unsubscribe = onSnapshot(
+      scoresCollection,
+      (snapshot) => {
+        const updatedScores = {};
+
+        snapshot.forEach((doc) => {
+          const data = doc.data();
+          updatedScores[data.gameId] = {
+            score: data.score || 0,
+            completed: data.completed || false,
+            lastPlayed: data.lastPlayed,
+            unitId: data.unitId,
+            points: data.points || 0,
+          };
+        });
+
+        console.log("🔄 Real-time game scores update:", updatedScores);
+
+        // Only update if scores actually changed
+        if (
+          JSON.stringify(updatedScores) !==
+          JSON.stringify(gameScoresRef.current)
+        ) {
+          setGameScores(updatedScores);
+          gameScoresRef.current = updatedScores;
+
+          // Recalculate progress with new scores
+          recalculateAllProgress().catch(console.error);
         }
       },
-      (err) => console.error("Overall scores snapshot error:", err)
+      (err) => {
+        console.error("❌ Game scores snapshot error:", err);
+      }
     );
 
     return () => {
-      unsubProgress();
-      unsubOverall();
+      console.log("🧹 Cleaning up game scores listener");
+      unsubscribe();
     };
-  }, [userData?.uid]);
+  }, [userData?.uid, recalculateAllProgress]);
 
   // 🎯 Handle navigation
   const handleOpen = useCallback(
@@ -804,6 +893,11 @@ export default function MainComDep() {
         setProgressData(initialProgress);
         setUnlockedUnits([0]);
         setUserScore(0);
+        setGameScores({});
+
+        // Update refs
+        progressDataRef.current = initialProgress;
+        gameScoresRef.current = {};
 
         alert("تم إعادة تعيين التقدم بنجاح!");
       } catch (error) {
@@ -835,7 +929,7 @@ export default function MainComDep() {
       } flex flex-col items-center justify-start py-4 sm:py-6 px-3 sm:px-6`}
       dir="rtl"
     >
-      {/* Navbar */}
+      {/* Navbar - Removed reset button from here */}
       <div
         className={`w-full max-w-7xl flex justify-between items-center p-3 sm:p-4 mb-4 sm:mb-6 rounded-2xl shadow-lg ${
           darkMode ? "bg-gray-800/70" : "bg-white"
@@ -862,15 +956,6 @@ export default function MainComDep() {
           </h1>
         </div>
         <div className="flex items-center space-x-3 sm:space-x-4">
-          <Button
-            onClick={resetProgress}
-            variant="outlined"
-            color="warning"
-            size={isMobile ? "small" : "medium"}
-            className={isMobile ? "text-xs" : ""}
-          >
-            إعادة تعيين
-          </Button>
           <span
             className={`font-semibold ${isMobile ? "text-sm" : "text-base"}`}
           >
@@ -949,21 +1034,29 @@ export default function MainComDep() {
           <div className="mt-2 p-2 bg-black/20 rounded">
             <p>الوحدات المفتوحة: {unlockedUnits.join(", ")}</p>
             <p>إجمالي النقاط: {userScore}</p>
-            <p>عدد الوحدات: {progressData.length}</p>
+            <p>
+              عدد الألعاب المكتملة:{" "}
+              {
+                Object.values(gameScores).filter((score) => score.completed)
+                  .length
+              }
+            </p>
             <p>معرف المستخدم: {userData?.uid || "غير متوفر"}</p>
           </div>
         </details>
       </div>
 
-      {/* Main content */}
+      {/* Main content - UPDATED LAYOUT */}
       <div
-        className={`container max-w-7xl grid gap-4 sm:gap-6 ${
-          isDesktop ? "grid-cols-1 lg:grid-cols-4" : "grid-cols-1"
+        className={`w-full max-w-7xl flex flex-col lg:flex-row gap-4 sm:gap-6 ${
+          isDesktop ? "flex-row" : "flex-col"
         }`}
       >
-        {/* Left: Progress & Leaderboard */}
-        <div className="space-y-4 sm:space-y-6">
-          {/* Progress */}
+        {/* Left: Progress & Leaderboard - UPDATED SIZES */}
+        <div
+          className={`space-y-4 sm:space-y-6 ${isDesktop ? "w-1/3" : "w-full"}`}
+        >
+          {/* Progress - ENLARGED */}
           <div
             className={`rounded-2xl p-4 sm:p-6 shadow-lg ${
               darkMode ? "bg-gray-800/60" : "bg-white"
@@ -977,36 +1070,39 @@ export default function MainComDep() {
               <Gamepad className="ml-2 text-teal-500" /> تقدمي الدراسي
             </h3>
             {progressData.map((unit) => (
-              <div className="mb-4 group" key={unit.id}>
+              <div className="mb-6 group" key={unit.id}>
                 <div
-                  className={`flex justify-between mb-1 font-semibold ${
-                    isMobile ? "text-sm" : "text-base"
+                  className={`flex justify-between mb-2 font-semibold ${
+                    isMobile ? "text-base" : "text-lg"
                   }`}
                 >
                   <div className="flex items-center">
                     {unit.completed ? (
                       <CheckCircle
                         className="text-green-500 mr-2"
-                        fontSize={isMobile ? "small" : "medium"}
+                        fontSize={isMobile ? "medium" : "large"}
                       />
                     ) : isUnitUnlocked(unit.id) ? (
                       <LockOpen
                         className="text-blue-500 mr-2"
-                        fontSize={isMobile ? "small" : "medium"}
+                        fontSize={isMobile ? "medium" : "large"}
                       />
                     ) : (
                       <Lock
                         className="text-gray-500 mr-2"
-                        fontSize={isMobile ? "small" : "medium"}
+                        fontSize={isMobile ? "medium" : "large"}
                       />
                     )}
-                    <span className={isMobile ? "text-xs" : "text-sm"}>
+                    <span className={isMobile ? "text-sm" : "text-base"}>
                       {isMobile ? `الوحدة ${unit.id + 1}` : unit.label}
                     </span>
                   </div>
-                  <span>{unit.percentage}%</span>
+                  <span className={isMobile ? "text-base" : "text-lg"}>
+                    {unit.percentage}%
+                  </span>
                 </div>
-                <div className="w-full bg-gray-200 dark:bg-gray-700 h-3 sm:h-4 rounded-full overflow-hidden">
+                {/* ENLARGED Progress Bar */}
+                <div className="w-full bg-gray-200 dark:bg-gray-700 h-4 sm:h-6 rounded-full overflow-hidden mb-2">
                   <div
                     className={`h-full bg-gradient-to-r ${
                       {
@@ -1023,10 +1119,9 @@ export default function MainComDep() {
                     )}
                   </div>
                 </div>
-                <div className="flex justify-between text-xs text-gray-500 mt-1">
+                <div className="flex justify-between text-sm text-gray-500 mt-2">
                   <span>
-                    {unit.completedGames || 0} /{" "}
-                    {getGamesByUnit(unit.id).length} ألعاب مكتملة
+                    {unit.completedGames || 0} / {unit.totalGames} ألعاب مكتملة
                   </span>
                   <span>
                     {unit.totalScore || 0} / {unit.maxPossibleScore || 0} نقطة
@@ -1034,7 +1129,7 @@ export default function MainComDep() {
                 </div>
                 {!isUnitUnlocked(unit.id) && unit.id > 0 && (
                   <p
-                    className={`text-gray-500 mt-1 ${
+                    className={`text-gray-500 mt-2 ${
                       isMobile ? "text-xs" : "text-sm"
                     }`}
                   >
@@ -1043,24 +1138,40 @@ export default function MainComDep() {
                 )}
               </div>
             ))}
+
+            {/* Reset Button moved to end of progress section */}
+            <div className="mt-6 pt-4 border-t border-gray-300 dark:border-gray-600">
+              <Button
+                onClick={resetProgress}
+                variant="outlined"
+                color="warning"
+                startIcon={<Refresh />}
+                fullWidth
+                size={isMobile ? "medium" : "large"}
+              >
+                إعادة تعيين التقدم
+              </Button>
+            </div>
           </div>
 
-          {/* Leaderboard - Hide on mobile if too crowded */}
-          {!isMobile && (
+          {/* Leaderboard - ENLARGED and UPDATED */}
+          <div
+            className={`rounded-2xl p-4 sm:p-6 shadow-lg ${
+              darkMode ? "bg-gray-800/60" : "bg-white"
+            }`}
+          >
             <Leaderboard
               darkMode={darkMode}
               userId={userData?.uid}
               userScore={userScore}
               isMobile={isMobile}
             />
-          )}
+          </div>
         </div>
 
-        {/* Right: Units, Lessons & Games */}
+        {/* Right: Units, Lessons & Games - UPDATED LAYOUT */}
         <div
-          className={`space-y-4 sm:space-y-6 ${
-            isDesktop ? "lg:col-span-3" : ""
-          }`}
+          className={`space-y-4 sm:space-y-6 ${isDesktop ? "w-2/3" : "w-full"}`}
         >
           {/* Units Section */}
           {progressData.map((unit) => (
@@ -1089,7 +1200,7 @@ export default function MainComDep() {
                     )}
                     <span
                       className={`px-3 py-1 rounded-full bg-green-500/20 text-green-600 dark:text-green-400 ${
-                        isMobile ? "text-xs" : "text-sm"
+                        isMobile ? "text-sm" : "text-base"
                       }`}
                     >
                       {unit.percentage}% مكتمل
@@ -1182,6 +1293,8 @@ export default function MainComDep() {
                     >
                       {getGamesByUnit(unit.id).map((game, gameIndex) => {
                         const isUnlocked = isUnitUnlocked(unit.id);
+                        const gameScore = getGameScore(game.gameId);
+                        const isCompleted = isGameCompleted(game.gameId);
 
                         return (
                           <div
@@ -1208,6 +1321,13 @@ export default function MainComDep() {
                             {!isUnlocked && (
                               <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-10">
                                 <Lock className="text-white text-2xl sm:text-4xl" />
+                              </div>
+                            )}
+
+                            {/* Completion Checkmark */}
+                            {isCompleted && (
+                              <div className="absolute top-2 right-2 z-20">
+                                <CheckCircle className="text-green-500 text-2xl bg-white rounded-full" />
                               </div>
                             )}
 
@@ -1239,7 +1359,7 @@ export default function MainComDep() {
                                   {game.level}
                                 </span>
                                 <span className="px-2 py-1 rounded-full bg-yellow-500/70 backdrop-blur-sm text-black">
-                                  {game.points} نقطة
+                                  {gameScore}/{game.points} نقطة
                                 </span>
                               </div>
                             </div>
@@ -1252,16 +1372,6 @@ export default function MainComDep() {
               </div>
             </div>
           ))}
-
-          {/* Mobile Leaderboard */}
-          {isMobile && (
-            <Leaderboard
-              darkMode={darkMode}
-              userId={userData?.uid}
-              userScore={userScore}
-              isMobile={isMobile}
-            />
-          )}
 
           {/* Announcements */}
           <div
