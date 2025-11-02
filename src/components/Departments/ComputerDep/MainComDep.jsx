@@ -1,4 +1,4 @@
-// MainComDep.jsx - UPDATED UI LAYOUT
+// MainComDep.jsx - FIXED CIRCULAR DEPENDENCY
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Avatar, Button, useMediaQuery, useTheme } from "@mui/material";
@@ -54,10 +54,12 @@ export default function MainComDep() {
   const [userScore, setUserScore] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [gameScores, setGameScores] = useState({});
+  const [lessonCompletions, setLessonCompletions] = useState({});
 
   // 🎯 Refs to prevent unnecessary re-renders
   const progressDataRef = useRef([]);
   const gameScoresRef = useRef({});
+  const lessonCompletionsRef = useRef({});
   const isInitializedRef = useRef(false);
 
   // 🎯 Memoized data definitions
@@ -153,32 +155,6 @@ export default function MainComDep() {
           gradientRight: "from-amber-600 to-yellow-400",
         },
         {
-          path: "realisticarena",
-          title: " Realistic Arena ",
-          unit: 0,
-          gameId: "hangman",
-          description: "احزر كلمات البرمجة قبل فوات الأوان",
-          level: "متوسط",
-          levelColor: "yellow",
-          icon: <BugReport />,
-          points: 100,
-          gradientLeft: "from-yellow-400 to-amber-600",
-          gradientRight: "from-amber-600 to-yellow-400",
-        },
-        {
-          path: "hangman",
-          title: "لعبة الرجل المشنوق",
-          unit: 0,
-          gameId: "hangman",
-          description: "احزر كلمات البرمجة قبل فوات الأوان",
-          level: "متوسط",
-          levelColor: "yellow",
-          icon: <BugReport />,
-          points: 100,
-          gradientLeft: "from-yellow-400 to-amber-600",
-          gradientRight: "from-amber-600 to-yellow-400",
-        },
-        {
           path: "flowchartgame",
           title: "مغامرة الخوارزميات",
           unit: 1,
@@ -247,8 +223,12 @@ export default function MainComDep() {
         requiredScore: 0,
         totalScore: 0,
         completedGames: 0,
-        totalGames: 4, // dragDrop + hangman
-        maxPossibleScore: 200,
+        completedLessons: 0,
+        totalGames: 2, // dragDrop + hangman
+        totalLessons: 2, // intro-programming + computer-components
+        maxPossibleScore: 100,
+        gameScore: 0,
+        lessonScore: 0,
       },
       {
         id: 1,
@@ -259,8 +239,12 @@ export default function MainComDep() {
         requiredScore: 30,
         totalScore: 0,
         completedGames: 0,
+        completedLessons: 0,
         totalGames: 2, // flowchartgame + algorithm-shapes
-        maxPossibleScore: 200,
+        totalLessons: 1, // algorithms-flowcharts
+        maxPossibleScore: 100,
+        gameScore: 0,
+        lessonScore: 0,
       },
       {
         id: 2,
@@ -271,8 +255,12 @@ export default function MainComDep() {
         requiredScore: 60,
         totalScore: 0,
         completedGames: 0,
+        completedLessons: 0,
         totalGames: 1, // compiler-journey
+        totalLessons: 1, // javascript-basics
         maxPossibleScore: 100,
+        gameScore: 0,
+        lessonScore: 0,
       },
       {
         id: 3,
@@ -283,8 +271,12 @@ export default function MainComDep() {
         requiredScore: 90,
         totalScore: 0,
         completedGames: 0,
+        completedLessons: 0,
         totalGames: 1, // scratch-lab
+        totalLessons: 1, // data-handling
         maxPossibleScore: 100,
+        gameScore: 0,
+        lessonScore: 0,
       },
     ];
   }, []);
@@ -379,42 +371,98 @@ export default function MainComDep() {
     }
   }, [userData?.uid]);
 
-  // 🎯 Calculate unit progress based on game scores
+  // 🎯 Load lesson completions from Firebase
+  const loadLessonCompletions = useCallback(async () => {
+    if (!userData?.uid) {
+      console.log("❌ No user UID found for lesson completions");
+      return {};
+    }
+
+    try {
+      const lessonsCollection = collection(
+        db,
+        "users",
+        userData.uid,
+        "lessons"
+      );
+      const lessonsSnapshot = await getDocs(lessonsCollection);
+      const completions = {};
+
+      lessonsSnapshot.forEach((doc) => {
+        const data = doc.data();
+        completions[data.lessonId] = {
+          completed: data.completed || false,
+          lastUpdated: data.lastUpdated,
+          unitId: data.unitId,
+        };
+      });
+
+      console.log("📚 Loaded lesson completions:", completions);
+      return completions;
+    } catch (error) {
+      console.error("❌ Error loading lesson completions:", error);
+      return {};
+    }
+  }, [userData?.uid]);
+
+  // 🎯 Calculate unit progress based on game scores AND lessons
   const calculateUnitProgress = useCallback(
-    (unit, gameScores) => {
+    (unit, gameScores, lessonCompletions) => {
       const unitGames = getGamesByUnit(unit.id);
-      let totalScore = 0;
-      let maxPossibleScore = 0;
+      const unitLessons = getLessonsByUnit(unit.id);
+
+      // Calculate game points (60% of unit)
+      let totalGameScore = 0;
+      let maxPossibleGameScore = 0;
       let completedGames = 0;
 
       unitGames.forEach((game) => {
         const gameScore = gameScores[game.gameId]?.score || 0;
         const gameMaxScore = game.points || 100;
 
-        totalScore += Math.min(gameScore, gameMaxScore);
-        maxPossibleScore += gameMaxScore;
+        totalGameScore += Math.min(gameScore, gameMaxScore);
+        maxPossibleGameScore += gameMaxScore;
 
         if (gameScores[game.gameId]?.completed) {
           completedGames++;
         }
       });
 
-      const percentage =
-        maxPossibleScore > 0
-          ? Math.min(100, Math.round((totalScore / maxPossibleScore) * 100))
+      // Calculate lesson points (40% of unit)
+      let totalLessonScore = 0;
+      const maxPossibleLessonScore = 40; // Fixed 40 points for lessons
+      let completedLessons = 0;
+
+      unitLessons.forEach((lesson) => {
+        if (lessonCompletions[lesson.id]?.completed) {
+          completedLessons++;
+          totalLessonScore += maxPossibleLessonScore / unitLessons.length; // Distribute 40 points evenly among lessons
+        }
+      });
+
+      // Combine scores: Games (scaled to 60 points) + Lessons (40 points)
+      const gameContribution =
+        maxPossibleGameScore > 0
+          ? (totalGameScore / maxPossibleGameScore) * 60
           : 0;
+
+      const totalScore = gameContribution + totalLessonScore;
+      const percentage = Math.min(100, Math.round(totalScore));
 
       const completed = percentage >= 100;
 
       return {
-        totalScore,
+        totalScore: Math.round(totalScore),
         percentage,
         completed,
         completedGames,
-        maxPossibleScore,
+        completedLessons,
+        maxPossibleScore: 100, // Total unit is now 100 points (40 lessons + 60 games)
+        gameScore: Math.round(gameContribution),
+        lessonScore: Math.round(totalLessonScore),
       };
     },
-    [getGamesByUnit]
+    [getGamesByUnit, getLessonsByUnit]
   );
 
   // 🎯 Calculate which units should be unlocked
@@ -436,66 +484,6 @@ export default function MainComDep() {
     return progressData.reduce((sum, unit) => sum + (unit.totalScore || 0), 0);
   }, []);
 
-  // 🎯 Recalculate all progress from individual game scores
-  const recalculateAllProgress = useCallback(async () => {
-    console.log("🔄 Starting progress recalculation...");
-
-    try {
-      const currentGameScores = await loadIndividualGameScores();
-      const initialProgress = getInitialProgressData();
-
-      // Calculate progress for each unit
-      const updatedProgress = initialProgress.map((unit) => {
-        const unitProgress = calculateUnitProgress(unit, currentGameScores);
-
-        return {
-          ...unit,
-          percentage: unitProgress.percentage,
-          completed: unitProgress.completed,
-          totalScore: unitProgress.totalScore,
-          completedGames: unitProgress.completedGames,
-          maxPossibleScore: unitProgress.maxPossibleScore,
-        };
-      });
-
-      // Calculate total user score
-      const newTotalScore = calculateTotalUserScore(updatedProgress);
-
-      // Update unlocked units
-      const newUnlockedUnits = calculateUnlockedUnits(updatedProgress);
-
-      console.log("💰 Recalculated total score:", newTotalScore);
-      console.log("📊 Final progress data:", updatedProgress);
-      console.log("🔓 Final unlocked units:", newUnlockedUnits);
-
-      // Update states
-      setProgressData(updatedProgress);
-      setUserScore(newTotalScore);
-      setUnlockedUnits(newUnlockedUnits);
-      setGameScores(currentGameScores);
-
-      // Update refs
-      progressDataRef.current = updatedProgress;
-      gameScoresRef.current = currentGameScores;
-
-      return {
-        updatedProgress,
-        newTotalScore,
-        newUnlockedUnits,
-        gameScores: currentGameScores,
-      };
-    } catch (error) {
-      console.error("❌ Error recalculating progress:", error);
-      throw error;
-    }
-  }, [
-    loadIndividualGameScores,
-    getInitialProgressData,
-    calculateUnitProgress,
-    calculateTotalUserScore,
-    calculateUnlockedUnits,
-  ]);
-
   // 🎯 Save progress to Firebase
   const saveProgressToFirebase = useCallback(async () => {
     if (!userData?.uid) {
@@ -514,6 +502,10 @@ export default function MainComDep() {
         (count, unit) => count + (unit.completedGames || 0),
         0
       );
+      const completedLessons = progressDataRef.current.reduce(
+        (count, unit) => count + (unit.completedLessons || 0),
+        0
+      );
       const completedUnits = progressDataRef.current.filter(
         (unit) => unit.completed
       ).length;
@@ -522,6 +514,7 @@ export default function MainComDep() {
         totalScore: userScore,
         totalProgress,
         completedGames,
+        completedLessons,
         completedUnits,
         unlockedUnits,
       });
@@ -539,6 +532,7 @@ export default function MainComDep() {
           totalScore: userScore,
           totalProgress: totalProgress,
           completedGames: completedGames,
+          completedLessons: completedLessons,
           completedUnits: completedUnits,
           lastUpdated: serverTimestamp(),
         },
@@ -563,6 +557,7 @@ export default function MainComDep() {
         {
           totalScore: userScore,
           completedGames: completedGames,
+          completedLessons: completedLessons,
           completedUnits: completedUnits,
           lastUpdated: serverTimestamp(),
         },
@@ -578,6 +573,7 @@ export default function MainComDep() {
           photoURL: userData.photoURL,
           totalScore: userScore,
           completedGames: completedGames,
+          completedLessons: completedLessons,
           completedUnits: completedUnits,
           lastUpdated: serverTimestamp(),
         },
@@ -590,6 +586,112 @@ export default function MainComDep() {
       console.error("❌ Error saving to Firestore:", error);
     }
   }, [userData, userScore, unlockedUnits, getTotalProgress]);
+
+  // 🎯 Recalculate all progress from individual game scores AND lesson completions
+  const recalculateAllProgress = useCallback(async () => {
+    console.log("🔄 Starting progress recalculation...");
+
+    try {
+      const currentGameScores = await loadIndividualGameScores();
+      const currentLessonCompletions = await loadLessonCompletions();
+      const initialProgress = getInitialProgressData();
+
+      // Calculate progress for each unit
+      const updatedProgress = initialProgress.map((unit) => {
+        const unitProgress = calculateUnitProgress(
+          unit,
+          currentGameScores,
+          currentLessonCompletions
+        );
+
+        return {
+          ...unit,
+          percentage: unitProgress.percentage,
+          completed: unitProgress.completed,
+          totalScore: unitProgress.totalScore,
+          completedGames: unitProgress.completedGames,
+          completedLessons: unitProgress.completedLessons,
+          maxPossibleScore: unitProgress.maxPossibleScore,
+          gameScore: unitProgress.gameScore,
+          lessonScore: unitProgress.lessonScore,
+        };
+      });
+
+      // Calculate total user score
+      const newTotalScore = calculateTotalUserScore(updatedProgress);
+
+      // Update unlocked units
+      const newUnlockedUnits = calculateUnlockedUnits(updatedProgress);
+
+      console.log("💰 Recalculated total score:", newTotalScore);
+      console.log("📊 Final progress data:", updatedProgress);
+      console.log("🔓 Final unlocked units:", newUnlockedUnits);
+
+      // Update states
+      setProgressData(updatedProgress);
+      setUserScore(newTotalScore);
+      setUnlockedUnits(newUnlockedUnits);
+      setGameScores(currentGameScores);
+      setLessonCompletions(currentLessonCompletions);
+
+      // Update refs
+      progressDataRef.current = updatedProgress;
+      gameScoresRef.current = currentGameScores;
+      lessonCompletionsRef.current = currentLessonCompletions;
+
+      return {
+        updatedProgress,
+        newTotalScore,
+        newUnlockedUnits,
+        gameScores: currentGameScores,
+        lessonCompletions: currentLessonCompletions,
+      };
+    } catch (error) {
+      console.error("❌ Error recalculating progress:", error);
+      throw error;
+    }
+  }, [
+    loadIndividualGameScores,
+    loadLessonCompletions,
+    getInitialProgressData,
+    calculateUnitProgress,
+    calculateTotalUserScore,
+    calculateUnlockedUnits,
+  ]);
+
+  // 🎯 Mark lesson as completed
+  const markLessonCompleted = useCallback(
+    async (lessonId, unitId) => {
+      if (!userData?.uid) return;
+
+      try {
+        const lessonRef = doc(db, "users", userData.uid, "lessons", lessonId);
+        await setDoc(
+          lessonRef,
+          {
+            lessonId,
+            unitId,
+            completed: true,
+            lastUpdated: serverTimestamp(),
+          },
+          { merge: true }
+        );
+
+        console.log("✅ Lesson marked as completed:", lessonId);
+
+        // Reload lesson completions and recalculate progress
+        const updatedCompletions = await loadLessonCompletions();
+        setLessonCompletions(updatedCompletions);
+        lessonCompletionsRef.current = updatedCompletions;
+
+        // Recalculate all progress
+        await recalculateAllProgress();
+      } catch (error) {
+        console.error("❌ Error marking lesson as completed:", error);
+      }
+    },
+    [userData?.uid, loadLessonCompletions, recalculateAllProgress]
+  );
 
   // 🎯 Update game progress and scores
   const updateGameProgress = useCallback(
@@ -653,6 +755,14 @@ export default function MainComDep() {
       return gameScores[gameId]?.completed || false;
     },
     [gameScores]
+  );
+
+  // 🎯 Check if lesson is completed
+  const isLessonCompleted = useCallback(
+    (lessonId) => {
+      return lessonCompletions[lessonId]?.completed || false;
+    },
+    [lessonCompletions]
   );
 
   // 🎯 Game completion handler
@@ -746,6 +856,11 @@ export default function MainComDep() {
           const gameScoresData = await loadIndividualGameScores();
           setGameScores(gameScoresData);
           gameScoresRef.current = gameScoresData;
+
+          // Load lesson completions
+          const lessonCompletionsData = await loadLessonCompletions();
+          setLessonCompletions(lessonCompletionsData);
+          lessonCompletionsRef.current = lessonCompletionsData;
         } else {
           console.log("📝 No existing progress, creating new...");
           // No existing progress, create new
@@ -772,6 +887,7 @@ export default function MainComDep() {
     getInitialProgressData,
     recalculateAllProgress,
     loadIndividualGameScores,
+    loadLessonCompletions,
   ]);
 
   // 🎯 Save to Firebase when data changes
@@ -782,7 +898,9 @@ export default function MainComDep() {
     const shouldSave =
       JSON.stringify(progressData) !==
         JSON.stringify(progressDataRef.current) ||
-      JSON.stringify(gameScores) !== JSON.stringify(gameScoresRef.current);
+      JSON.stringify(gameScores) !== JSON.stringify(gameScoresRef.current) ||
+      JSON.stringify(lessonCompletions) !==
+        JSON.stringify(lessonCompletionsRef.current);
 
     if (shouldSave) {
       console.log("🔄 Data changed, saving to Firebase...");
@@ -790,6 +908,7 @@ export default function MainComDep() {
       // Update refs first
       progressDataRef.current = progressData;
       gameScoresRef.current = gameScores;
+      lessonCompletionsRef.current = lessonCompletions;
 
       saveProgressToFirebase();
     }
@@ -798,6 +917,7 @@ export default function MainComDep() {
     userScore,
     unlockedUnits,
     gameScores,
+    lessonCompletions,
     userData?.uid,
     isLoading,
     saveProgressToFirebase,
@@ -855,9 +975,62 @@ export default function MainComDep() {
     };
   }, [userData?.uid, recalculateAllProgress]);
 
+  // 🎯 REAL-TIME Firestore listeners for lesson completions
+  useEffect(() => {
+    if (!userData?.uid) return;
+
+    console.log(
+      "👂 Setting up real-time lesson completions listener for user:",
+      userData.uid
+    );
+
+    const lessonsCollection = collection(db, "users", userData.uid, "lessons");
+
+    const unsubscribe = onSnapshot(
+      lessonsCollection,
+      (snapshot) => {
+        const updatedCompletions = {};
+
+        snapshot.forEach((doc) => {
+          const data = doc.data();
+          updatedCompletions[data.lessonId] = {
+            completed: data.completed || false,
+            lastUpdated: data.lastUpdated,
+            unitId: data.unitId,
+          };
+        });
+
+        console.log(
+          "🔄 Real-time lesson completions update:",
+          updatedCompletions
+        );
+
+        // Only update if completions actually changed
+        if (
+          JSON.stringify(updatedCompletions) !==
+          JSON.stringify(lessonCompletionsRef.current)
+        ) {
+          setLessonCompletions(updatedCompletions);
+          lessonCompletionsRef.current = updatedCompletions;
+
+          // Recalculate progress with new completions
+          recalculateAllProgress().catch(console.error);
+        }
+      },
+      (err) => {
+        console.error("❌ Lesson completions snapshot error:", err);
+      }
+    );
+
+    return () => {
+      console.log("🧹 Cleaning up lesson completions listener");
+      unsubscribe();
+    };
+  }, [userData?.uid, recalculateAllProgress]);
+
   // 🎯 Handle navigation
   const handleOpen = useCallback(
-    (path, unitId = null, gameId = null) => {
+    (path, unitId = null, gameId = null, lessonId = null) => {
       if (!path) {
         alert("المسار غير متاح حالياً.");
         return;
@@ -873,6 +1046,7 @@ export default function MainComDep() {
         darkMode: darkMode,
         unitId: unitId,
         gameId: gameId,
+        lessonId: lessonId,
       };
 
       console.log("🎯 Navigating to:", path, "with state:", gameState);
@@ -900,7 +1074,7 @@ export default function MainComDep() {
         );
         const scoresSnapshot = await getDocs(scoresCollection);
 
-        const deletePromises = scoresSnapshot.docs.map((doc) =>
+        const deleteScorePromises = scoresSnapshot.docs.map((doc) =>
           setDoc(
             doc.ref,
             {
@@ -912,7 +1086,27 @@ export default function MainComDep() {
           )
         );
 
-        await Promise.all(deletePromises);
+        // Delete all lesson completions
+        const lessonsCollection = collection(
+          db,
+          "users",
+          userData.uid,
+          "lessons"
+        );
+        const lessonsSnapshot = await getDocs(lessonsCollection);
+
+        const deleteLessonPromises = lessonsSnapshot.docs.map((doc) =>
+          setDoc(
+            doc.ref,
+            {
+              completed: false,
+              lastUpdated: serverTimestamp(),
+            },
+            { merge: true }
+          )
+        );
+
+        await Promise.all([...deleteScorePromises, ...deleteLessonPromises]);
 
         // Reset progress
         const initialProgress = getInitialProgressData();
@@ -920,10 +1114,12 @@ export default function MainComDep() {
         setUnlockedUnits([0]);
         setUserScore(0);
         setGameScores({});
+        setLessonCompletions({});
 
         // Update refs
         progressDataRef.current = initialProgress;
         gameScoresRef.current = {};
+        lessonCompletionsRef.current = {};
 
         alert("تم إعادة تعيين التقدم بنجاح!");
       } catch (error) {
@@ -955,7 +1151,7 @@ export default function MainComDep() {
       } flex flex-col items-center justify-start py-4 sm:py-6 px-3 sm:px-6`}
       dir="rtl"
     >
-      {/* Navbar - Removed reset button from here */}
+      {/* Navbar */}
       <div
         className={`w-full max-w-7xl flex justify-between items-center p-3 sm:p-4 mb-4 sm:mb-6 rounded-2xl shadow-lg ${
           darkMode ? "bg-gray-800/70" : "bg-white"
@@ -1048,7 +1244,49 @@ export default function MainComDep() {
               0
             )}
           </div>
+          <div
+            className={`px-3 py-1 sm:px-4 sm:py-2 rounded-full ${
+              darkMode ? "bg-amber-500/20" : "bg-amber-100"
+            } text-amber-600 font-semibold ${
+              isMobile ? "text-sm" : "text-base"
+            }`}
+          >
+            الدروس المكتملة:{" "}
+            {progressData.reduce(
+              (count, unit) => count + (unit.completedLessons || 0),
+              0
+            )}
+          </div>
         </div>
+      </div>
+
+      {/* Debug Info */}
+      <div className="w-full max-w-7xl mb-4">
+        <details
+          className={`text-sm ${darkMode ? "text-gray-300" : "text-gray-600"}`}
+        >
+          <summary>معلومات التصحيح (Debug)</summary>
+          <div className="mt-2 p-2 bg-black/20 rounded">
+            <p>الوحدات المفتوحة: {unlockedUnits.join(", ")}</p>
+            <p>إجمالي النقاط: {userScore}</p>
+            <p>
+              عدد الألعاب المكتملة:{" "}
+              {
+                Object.values(gameScores).filter((score) => score.completed)
+                  .length
+              }
+            </p>
+            <p>
+              عدد الدروس المكتملة:{" "}
+              {
+                Object.values(lessonCompletions).filter(
+                  (lesson) => lesson.completed
+                ).length
+              }
+            </p>
+            <p>معرف المستخدم: {userData?.uid || "غير متوفر"}</p>
+          </div>
+        </details>
       </div>
 
       {/* Main content - UPDATED LAYOUT */}
@@ -1126,7 +1364,8 @@ export default function MainComDep() {
                 </div>
                 <div className="flex justify-between text-sm text-gray-500 mt-2">
                   <span>
-                    {unit.completedGames || 0} / {unit.totalGames} ألعاب مكتملة
+                    {unit.completedGames || 0} / {unit.totalGames} ألعاب -
+                    {unit.completedLessons || 0} / {unit.totalLessons} دروس
                   </span>
                   <span>
                     {unit.totalScore || 0} / {unit.maxPossibleScore || 0} نقطة
@@ -1221,62 +1460,80 @@ export default function MainComDep() {
                         isMobile ? "text-xl" : "text-2xl"
                       }`}
                     >
-                      🧩 الدروس التفاعلية
+                      🧩 الدروس التفاعلية (40 نقطة)
                     </h3>
                     <div
                       className={`grid gap-4 sm:gap-6 ${getGridClasses(
                         "lessons"
                       )}`}
                     >
-                      {getLessonsByUnit(unit.id).map((lesson, lessonIndex) => (
-                        <div
-                          key={lessonIndex}
-                          className={`relative rounded-2xl overflow-hidden shadow-lg transform transition-all duration-500 hover:scale-[1.05] cursor-pointer group ${
-                            !isUnitUnlocked(unit.id)
-                              ? "opacity-50 cursor-not-allowed"
-                              : ""
-                          }`}
-                          onClick={() =>
-                            isUnitUnlocked(unit.id) &&
-                            handleOpen(
-                              `lesson-${unit.id}-${lessonIndex}`,
-                              unit.id
-                            )
-                          }
-                        >
-                          {/* Animated Background Gradient */}
-                          <div
-                            className={`absolute inset-0 scale-x-0 group-hover:scale-x-100 origin-left transition-transform duration-700 bg-gradient-to-br ${lesson.gradient}`}
-                          ></div>
+                      {getLessonsByUnit(unit.id).map((lesson, lessonIndex) => {
+                        const isCompleted = isLessonCompleted(lesson.id);
+                        const isUnlocked = isUnitUnlocked(unit.id);
 
-                          {/* Content */}
-                          <div className="relative z-10 flex flex-col items-center justify-center p-4 sm:p-6 text-center min-h-[120px] sm:min-h-[140px]">
-                            <span className="text-2xl sm:text-3xl mb-2 sm:mb-3 transition-transform duration-500 group-hover:animate-bounce">
-                              {lesson.emoji}
-                            </span>
-                            <span
-                              className={`font-bold ${
-                                isMobile ? "text-base" : "text-lg"
-                              }`}
-                            >
-                              {lesson.title}
-                            </span>
-                            <p
-                              className={`mt-2 opacity-75 ${
-                                isMobile ? "text-xs" : "text-sm"
-                              }`}
-                            >
-                              {lesson.description}
-                            </p>
-                            {!isUnitUnlocked(unit.id) && (
-                              <Lock
-                                className="absolute top-2 left-2 text-gray-500"
-                                fontSize="small"
-                              />
+                        return (
+                          <div
+                            key={lessonIndex}
+                            className={`relative rounded-2xl overflow-hidden shadow-lg transform transition-all duration-500 hover:scale-[1.05] cursor-pointer group ${
+                              !isUnlocked ? "opacity-50 cursor-not-allowed" : ""
+                            }`}
+                            onClick={() => {
+                              if (isUnlocked) {
+                                markLessonCompleted(lesson.id, unit.id);
+                                handleOpen(
+                                  `lesson-${unit.id}-${lessonIndex}`,
+                                  unit.id,
+                                  null,
+                                  lesson.id
+                                );
+                              }
+                            }}
+                          >
+                            {/* Animated Background Gradient */}
+                            <div
+                              className={`absolute inset-0 scale-x-0 group-hover:scale-x-100 origin-left transition-transform duration-700 bg-gradient-to-br ${lesson.gradient}`}
+                            ></div>
+
+                            {/* Completion Checkmark */}
+                            {isCompleted && (
+                              <div className="absolute top-2 right-2 z-20">
+                                <CheckCircle className="text-green-500 text-2xl bg-white rounded-full" />
+                              </div>
                             )}
+
+                            {/* Lock Overlay */}
+                            {!isUnlocked && (
+                              <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-10">
+                                <Lock className="text-white text-2xl sm:text-4xl" />
+                              </div>
+                            )}
+
+                            {/* Content */}
+                            <div className="relative z-10 flex flex-col items-center justify-center p-4 sm:p-6 text-center min-h-[120px] sm:min-h-[140px]">
+                              <span className="text-2xl sm:text-3xl mb-2 sm:mb-3 transition-transform duration-500 group-hover:animate-bounce">
+                                {lesson.emoji}
+                              </span>
+                              <span
+                                className={`font-bold ${
+                                  isMobile ? "text-base" : "text-lg"
+                                }`}
+                              >
+                                {lesson.title}
+                              </span>
+                              <p
+                                className={`mt-2 opacity-75 ${
+                                  isMobile ? "text-xs" : "text-sm"
+                                }`}
+                              >
+                                {lesson.description}
+                              </p>
+                              <div className="mt-2 text-xs text-gray-600 bg-white/70 px-2 py-1 rounded-full">
+                                {isCompleted ? "مكتمل" : "انقر لبدء الدرس"}
+                              </div>
+                            </div>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 )}
@@ -1289,7 +1546,7 @@ export default function MainComDep() {
                         isMobile ? "text-xl" : "text-2xl"
                       }`}
                     >
-                      🎮 الألعاب التعليمية
+                      🎮 الألعاب التعليمية (60 نقطة)
                     </h3>
                     <div
                       className={`grid gap-4 sm:gap-6 ${getGridClasses(
