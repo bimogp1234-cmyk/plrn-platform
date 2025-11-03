@@ -1,16 +1,22 @@
 import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
+//Contexts
 import { AuthProvider } from "./contexts/AuthContext";
+import ProtectedRoute from "./components/Routes/ProtectedRoute";
+//Forms
 import LoginForm from "./components/login/LoginForm";
 import RegisterForm from "./components/RegisterForm/RegisterForm";
 import ForgetPassword from "./components/ForgetPassword/ForgetPassword";
+//Main
 import Main from "./components/Main/Main";
-import ProtectedRoute from "./components/Routes/ProtectedRoute";
 import Dashboard from "./components/Dashboard/Dashboard";
 import NotFoundPage from "./components/NotFound/NotFoundPage";
+// Games Imports
 import DragDrop from "./components/Games/DragDrop/DragDrop";
 import Memorygame from "./components/Games/MemoryGame/Memorygame";
 import MessingLines from "./components/Games/MessingLines/MessingLines";
 import FPSGame from "./components/Games/RealisticArena/FPSGame";
+import AdventureTimeGame from "./components/Games/Adventure Time/src/App";
+// Department Imports
 import MainComDep from "./components/Departments/ComputerDep/MainComDep";
 import PhysicDep from "./components/Departments/PhysicsDep/PhysicDep";
 import MathDep from "./components/Departments/MathDep/MathDep";
@@ -45,6 +51,7 @@ export default function App() {
             <Route path="/messinglines" element={<MessingLines />} />
             <Route path="/memorycard" element={<Memorygame />} />
             <Route path="/realisticarena" element={<FPSGame />} />
+            <Route path="/adventuretime" element={<AdventureTimeGame />} />
           </Routes>
         </Router>
       </AuthProvider>

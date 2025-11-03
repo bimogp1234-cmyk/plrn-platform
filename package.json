@@ -20,8 +20,10 @@
     "@mui/material": "^7.3.4",
     "@react-three/drei": "^9.122.0",
     "@react-three/fiber": "^8.18.0",
+    "@react-three/rapier": "^2.1.0",
     "firebase": "^12.4.0",
     "framer-motion": "^12.23.16",
+    "leva": "^0.10.1",
     "lottie-react": "^2.4.1",
     "lucide-react": "^0.544.0",
     "react": "^18.2.0",
@@ -32,7 +34,13 @@
     "react-router-dom": "^7.9.3",
     "react-toastify": "^11.0.5",
     "three": "^0.168.0",
-    "zustand": "^5.0.8"
+    "zustand": "^5.0.8",
+    "@react-three/drei": "9.75.0",
+    "@react-three/fiber": "8.13.3",
+    "@react-three/rapier": "^0.15.1",
+    "leva": "^0.9.34",
+    "three": "0.153.0",
+    "zustand": "^4.3.7"
   },
   "devDependencies": {
     "@vitejs/plugin-react-swc": "^4.1.0",
