@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import "@fontsource/tajawal";
 import {
   AppBar,
@@ -13,6 +13,13 @@ import {
 } from "@mui/material";
 import { Brightness4, ArrowBack } from "@mui/icons-material";
 import "./HangmanGame.css";
+
+// Firestore helpers (optional remote resume when user is signed in)
+import {
+  getGameProgress,
+  setGameProgress,
+} from "../../../FireBaseDatabase/firestoreService";
+import { useAuth } from "../../../contexts/AuthContext";
 
 const QUIZ = [
   {
@@ -114,6 +121,9 @@ export default function HangmanGame() {
   const [dialog, setDialog] = useState({ open: false, type: "", text: "" });
   const [disabledOptions, setDisabledOptions] = useState(false);
 
+  const { user } = useAuth ? useAuth() : { user: null };
+  const GAME_ID = "hangman";
+
   const successAudioRef = useRef(null);
   const wrongAudioRef = useRef(null);
 
@@ -136,6 +146,98 @@ export default function HangmanGame() {
   };
 
   const toggleTheme = () => setDarkMode((prev) => !prev);
+
+  // --- Auto-resume on mount: try localStorage, then (if signed in) remote Firestore ---
+  useEffect(() => {
+    let mounted = true;
+    const load = async () => {
+      try {
+        // 1) localStorage
+        const raw = localStorage.getItem(`game_progress_${GAME_ID}`);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (mounted && parsed) {
+            setQuestionIndex(parsed.currentLevel || 0);
+            setWrongAttempts(parsed.wrongAttempts || 0);
+            setFinished(Boolean(parsed.finished));
+          }
+        }
+
+        // 2) remote (overrides local) when user signed in
+        if (user?.uid) {
+          try {
+            const remote = await getGameProgress(user.uid, GAME_ID);
+            if (mounted && remote) {
+              setQuestionIndex(remote.currentLevel || 0);
+              setWrongAttempts(remote.wrongAttempts || 0);
+              setFinished(Boolean(remote.finished));
+            }
+          } catch (err) {
+            console.warn("Hangman: failed to load remote progress:", err);
+          }
+        }
+      } catch (err) {
+        console.warn("Hangman: failed to load saved progress:", err);
+      }
+    };
+    load();
+    return () => {
+      mounted = false;
+    };
+  }, [user]);
+
+  // Persist progress locally and remotely (debounced)
+  useEffect(() => {
+    let t = null;
+    const save = async () => {
+      const payload = {
+        currentLevel: questionIndex,
+        wrongAttempts,
+        finished: Boolean(finished),
+      };
+      try {
+        localStorage.setItem(
+          `game_progress_${GAME_ID}`,
+          JSON.stringify(payload)
+        );
+      } catch (err) {
+        console.warn("Hangman: failed to save local progress", err);
+      }
+
+      const uid = user?.uid;
+      if (!uid) {
+        // Don't attempt remote saves if no authenticated user is available.
+        // This prevents "Missing or insufficient permissions" errors when
+        // an unauthenticated client tries to write to user-scoped documents.
+        console.debug("Hangman: skipping remote save (no signed-in user)");
+        return;
+      }
+
+      try {
+        await setGameProgress(uid, GAME_ID, payload);
+      } catch (err) {
+        // Surface helpful debug details so developers can quickly diagnose
+        // permission-denied issues (uid mismatch, rules not deployed, etc.).
+        try {
+          console.warn(
+            `Hangman: failed to save remote progress (uid=${uid})`,
+            err?.code || err?.message || err
+          );
+        } catch (nested) {
+          console.warn("Hangman: failed to save remote progress", err);
+        }
+
+        // If permission denied, give a clear hint about rules/deployment.
+        if (err && err.code === "permission-denied") {
+          console.warn(
+            "Firestore permission denied when saving Hangman progress. Ensure the user is authenticated and your Firestore rules allow writes to users/{uid}/games/{gameId}."
+          );
+        }
+      }
+    };
+    t = setTimeout(save, 400);
+    return () => clearTimeout(t);
+  }, [questionIndex, wrongAttempts, finished, user]);
 
   const handleChoose = (option) => {
     if (disabledOptions || finished) return;

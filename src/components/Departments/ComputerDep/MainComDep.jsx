@@ -16,19 +16,24 @@ import {
   MilitaryTech,
   Refresh,
 } from "@mui/icons-material";
-import Leaderboard from "./../LeaderboardComp/LeaderBoard";
+import Leaderboard from "./../LeaderboardComp/Leaderboard";
 import {
   doc,
-  setDoc,
   getDoc,
   onSnapshot,
   serverTimestamp,
   collection,
   getDocs,
-  writeBatch,
 } from "firebase/firestore";
-import { db } from "./../../../FireBaseDatabase/firebase";
-
+import {
+  saveUserProgress,
+  saveGameScore,
+  getUserScores,
+  getUserLessons,
+  resetUserProgress,
+  saveLessonCompletion,
+} from "./../../../FireBaseDatabase/firestoreService";
+import { db } from "../../../FireBaseDatabase/firebase";
 export default function MainComDep() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -62,278 +67,212 @@ export default function MainComDep() {
   const lessonCompletionsRef = useRef({});
   const isInitializedRef = useRef(false);
 
-  // 🎯 Memoized data definitions
-  const { lessonsData, announcementsData, gamesData } = useMemo(
-    () => ({
-      lessonsData: [
-        {
-          id: "intro-programming",
-          title: "مدخل إلى البرمجة",
-          unit: 0,
-          description: "تعرف على أساسيات البرمجة والمفاهيم الأساسية",
-          emoji: "💻",
-          gradient: "from-green-200 to-green-400",
-        },
-        {
-          id: "computer-components",
-          title: "المكونات المادية للحاسوب",
-          unit: 0,
-          description: "اكتشف مكونات الحاسوب ووظائفها",
-          emoji: "🖥️",
-          gradient: "from-blue-200 to-blue-400",
-        },
-        {
-          id: "algorithms-flowcharts",
-          title: "الخوارزميات والمخططات الانسيابية",
-          unit: 1,
-          description: "تعلم تصميم الخوارزميات والمخططات",
-          emoji: "📊",
-          gradient: "from-purple-200 to-purple-400",
-        },
-        {
-          id: "javascript-basics",
-          title: "برمجة بلغة جافا سكربت",
-          unit: 2,
-          description: "ابدأ رحلتك مع لغة جافا سكربت",
-          emoji: "📝",
-          gradient: "from-yellow-200 to-yellow-400",
-        },
-        {
-          id: "data-handling",
-          title: "التعامل مع البيانات",
-          unit: 3,
-          description: "إدارة وتخزين البيانات في البرامج",
-          emoji: "📂",
-          gradient: "from-red-200 to-red-400",
-        },
-      ],
-      announcementsData: [
-        {
-          title: "مسابقة أفضل مشروع بلغة سكراتش!",
-          subtitle: "آخر موعد 1 نوفمبر.",
-          color: "amber",
-          icon: "🏆",
-        },
-        {
-          title: "ورشة عمل: حل المشكلات بالخوارزميات",
-          subtitle: "يوم الثلاثاء القادم.",
-          color: "teal",
-          icon: "🔧",
-        },
-        {
-          title: "تصفيات بطولة البرمجة السريعة",
-          subtitle: "ابدأ التدرب الآن!",
-          color: "blue",
-          icon: "⚡",
-        },
-      ],
-      gamesData: [
-        {
-          path: "dragDrop",
-          title: "لعبة المخطط الانسيابي",
-          unit: 0,
-          gameId: "dragDrop",
-          description: "اختبر ذاكرتك مع مصطلحات البرمجة",
-          level: "سهل",
-          levelColor: "green",
-          icon: <BugReport />,
-          points: 100,
-          gradientLeft: "from-green-400 to-teal-600",
-          gradientRight: "from-teal-600 to-green-400",
-        },
-        {
-          path: "hangman",
-          title: "لعبة الرجل المشنوق",
-          unit: 0,
-          gameId: "hangman",
-          description: "احزر كلمات البرمجة قبل فوات الأوان",
-          level: "متوسط",
-          levelColor: "yellow",
-          icon: <BugReport />,
-          points: 100,
-          gradientLeft: "from-yellow-400 to-amber-600",
-          gradientRight: "from-amber-600 to-yellow-400",
-        },
-        {
-          path: "realisticarena",
-          title: "  Realistic Arena",
-          unit: 0,
-          gameId: "realisticarena",
-          description: "احزر كلمات البرمجة قبل فوات الأوان",
-          level: "متوسط",
-          levelColor: "yellow",
-          icon: <BugReport />,
-          points: 100,
-          gradientLeft: "from-yellow-400 to-amber-600",
-          gradientRight: "from-amber-600 to-yellow-400",
-        },
-        {
-          path: "adventuretime",
-          title: "  adventure-time Arena",
-          unit: 0,
-          gameId: "adventuretime",
-          description: "احزر كلمات البرمجة قبل فوات الأوان",
-          level: "متوسط",
-          levelColor: "yellow",
-          icon: <BugReport />,
-          points: 100,
-          gradientLeft: "from-yellow-400 to-amber-600",
-          gradientRight: "from-amber-600 to-yellow-400",
-        },
-        {
-          path: "messinglines",
-          title: " لعبة الخوارزمية الناقصة",
-          unit: 0,
-          gameId: "messinglines",
-          description: "احزر كلمات البرمجة قبل فوات الأوان",
-          level: "متوسط",
-          levelColor: "yellow",
-          icon: <BugReport />,
-          points: 100,
-          gradientLeft: "from-yellow-400 to-amber-600",
-          gradientRight: "from-amber-600 to-yellow-400",
-        },
-        {
-          path: "flowchartgame",
-          title: "مغامرة الخوارزميات",
-          unit: 1,
-          gameId: "flowchartgame",
-          description: "ارسم المسار الصحيح للخوارزمية",
-          level: "متوسط",
-          levelColor: "yellow",
-          icon: <SportsEsports />,
-          points: 100,
-          gradientLeft: "from-purple-400 to-pink-600",
-          gradientRight: "from-pink-600 to-purple-400",
-        },
-        {
-          path: "algorithm-shapes-game",
-          title: "لعبة أشكال الخوارزميات",
-          unit: 1,
-          gameId: "algorithm-shapes",
-          description: "رتب أشكال الخوارزميات في التسلسل الصحيح",
-          level: "متوسط",
-          levelColor: "yellow",
-          icon: <Code />,
-          points: 100,
-          gradientLeft: "from-indigo-400 to-purple-600",
-          gradientRight: "from-purple-600 to-indigo-400",
-        },
-        {
-          path: "compiler-game",
-          title: "رحلة المترجم",
-          unit: 2,
-          gameId: "compiler-journey",
-          description: "افهم كيفية عمل المترجم البرمجي",
-          level: "صعب",
-          levelColor: "red",
-          icon: <Code />,
-          points: 100,
-          gradientLeft: "from-red-400 to-rose-600",
-          gradientRight: "from-rose-600 to-red-400",
-        },
-        {
-          path: "scratch-lab",
-          title: "مختبر سكراتش",
-          unit: 3,
-          gameId: "scratch-lab",
-          description: "ابن مشاريعك الأولى بلغة سكراتش",
-          level: "سهل",
-          levelColor: "green",
-          icon: <School />,
-          points: 100,
-          gradientLeft: "from-blue-400 to-cyan-600",
-          gradientRight: "from-cyan-600 to-blue-400",
-        },
-      ],
-    }),
+  // 🎯 Units model: each unit contains its lessons and games with max points.
+  // This makes scoring deterministic and easy to change per-unit.
+  const units = useMemo(
+    () => [
+      {
+        id: 0,
+        label: "الوحدة الأولى: أساسيات البرمجة",
+        color: "teal",
+        lessonWeight: 0.4, // 40% of unit
+        gameWeight: 0.6, // 60% of unit
+        lessons: [
+          {
+            id: "intro-programming",
+            title: "مدخل إلى البرمجة",
+            emoji: "💻",
+            maxPoints: 40,
+            gradient: "from-green-200 to-green-400",
+          },
+          {
+            id: "computer-components",
+            title: "المكونات المادية للحاسوب",
+            emoji: "🖥️",
+            maxPoints: 40,
+            gradient: "from-blue-200 to-blue-400",
+          },
+        ],
+        games: [
+          {
+            path: "dragDrop",
+            title: "لعبة المخطط الانسيابي",
+            gameId: "dragDrop",
+            icon: <BugReport />,
+            maxPoints: 60,
+            gradientLeft: "from-green-400 to-teal-600",
+            gradientRight: "from-teal-600 to-green-400",
+          },
+          {
+            path: "hangmangame",
+            title: "لعبة الرجل المشنوق",
+            gameId: "hangmangame",
+            icon: <BugReport />,
+            maxPoints: 60,
+            gradientLeft: "from-yellow-400 to-amber-600",
+            gradientRight: "from-amber-600 to-yellow-400",
+          },
+          {
+            path: "messinglines",
+            title: "لعبة الخوارزمية الناقصة",
+            gameId: "messinglines",
+            icon: <BugReport />,
+            maxPoints: 60,
+            gradientLeft: "from-yellow-400 to-amber-600",
+            gradientRight: "from-amber-600 to-yellow-400",
+          },
+        ],
+      },
+      {
+        id: 1,
+        label: "الوحدة الثانية: مدخل للغات البرمجة",
+        color: "pink",
+        lessonWeight: 0.4,
+        gameWeight: 0.6,
+        lessons: [
+          {
+            id: "algorithms-flowcharts",
+            title: "الخوارزميات والمخططات الانسيابية",
+            emoji: "📊",
+            maxPoints: 40,
+            gradient: "from-purple-200 to-purple-400",
+          },
+        ],
+        games: [
+          {
+            path: "flowchartgame",
+            title: "مغامرة الخوارزميات",
+            gameId: "flowchartgame",
+            icon: <SportsEsports />,
+            maxPoints: 60,
+            gradientLeft: "from-purple-400 to-pink-600",
+            gradientRight: "from-pink-600 to-purple-400",
+          },
+          {
+            path: "algorithm-shapes-game",
+            title: "لعبة أشكال الخوارزميات",
+            gameId: "algorithm-shapes",
+            icon: <Code />,
+            maxPoints: 60,
+            gradientLeft: "from-indigo-400 to-purple-600",
+            gradientRight: "from-purple-600 to-indigo-400",
+          },
+        ],
+      },
+      {
+        id: 2,
+        label: "الوحدة الثالثة: الخوارزميات والمخططات",
+        color: "amber",
+        lessonWeight: 0.4,
+        gameWeight: 0.6,
+        lessons: [
+          {
+            id: "javascript-basics",
+            title: "برمجة بلغة جافا سكربت",
+            emoji: "📝",
+            maxPoints: 40,
+            gradient: "from-yellow-200 to-yellow-400",
+          },
+        ],
+        games: [
+          {
+            path: "compiler-game",
+            title: "رحلة المترجم",
+            gameId: "compiler-journey",
+            icon: <Code />,
+            maxPoints: 60,
+            gradientLeft: "from-red-400 to-rose-600",
+            gradientRight: "from-rose-600 to-red-400",
+          },
+        ],
+      },
+      {
+        id: 3,
+        label: "الوحدة الرابعة: مبادئ البرمجة بلغة سكراتش",
+        color: "sky",
+        lessonWeight: 0.4,
+        gameWeight: 0.6,
+        lessons: [
+          {
+            id: "data-handling",
+            title: "التعامل مع البيانات",
+            emoji: "📂",
+            maxPoints: 40,
+            gradient: "from-red-200 to-red-400",
+          },
+        ],
+        games: [
+          {
+            path: "scratch-lab",
+            title: "مختبر سكراتش",
+            gameId: "scratch-lab",
+            icon: <School />,
+            maxPoints: 60,
+            gradientLeft: "from-blue-400 to-cyan-600",
+            gradientRight: "from-cyan-600 to-blue-400",
+          },
+        ],
+      },
+    ],
     []
   );
 
   // 🎯 Initialize progress data structure
   const getInitialProgressData = useCallback(() => {
-    return [
-      {
-        id: 0,
-        label: "الوحدة الأولى: أساسيات البرمجة",
+    // Create initial progress entries derived from `units` model so it's DRY and consistent
+    return units.map((u, idx) => {
+      const totalGames = (u.games || []).length;
+      const totalLessons = (u.lessons || []).length;
+      const maxPossibleGameScore = (u.games || []).reduce(
+        (s, g) => s + (g.maxPoints || 100),
+        0
+      );
+      const maxPossibleLessonScore = (u.lessons || []).reduce(
+        (s, l) => s + (l.maxPoints || 40),
+        0
+      );
+      const maxPossibleScore = Math.round(
+        (u.gameWeight || 0.6) * 100 + (u.lessonWeight || 0.4) * 100
+      );
+
+      // default required score thresholds (fallback to index * 30 if not configured)
+      const defaultThresholds = [0, 30, 60, 90];
+
+      return {
+        id: u.id,
+        label: u.label,
         percentage: 0,
-        color: "teal",
+        color: u.color || (defaultThresholds[u.id] ? "teal" : "teal"),
         completed: false,
-        requiredScore: 0,
+        requiredScore: defaultThresholds[u.id] || u.id * 30,
         totalScore: 0,
         completedGames: 0,
         completedLessons: 0,
-        totalGames: 2, // dragDrop + hangman
-        totalLessons: 2, // intro-programming + computer-components
-        maxPossibleScore: 100,
+        totalGames,
+        totalLessons,
+        maxPossibleScore: maxPossibleScore || 100,
         gameScore: 0,
         lessonScore: 0,
-      },
-      {
-        id: 1,
-        label: "الوحدة الثانية: مدخل للغات البرمجة",
-        percentage: 0,
-        color: "pink",
-        completed: false,
-        requiredScore: 30,
-        totalScore: 0,
-        completedGames: 0,
-        completedLessons: 0,
-        totalGames: 2, // flowchartgame + algorithm-shapes
-        totalLessons: 1, // algorithms-flowcharts
-        maxPossibleScore: 100,
-        gameScore: 0,
-        lessonScore: 0,
-      },
-      {
-        id: 2,
-        label: "الوحدة الثالثة: الخوارزميات والمخططات",
-        percentage: 0,
-        color: "amber",
-        completed: false,
-        requiredScore: 60,
-        totalScore: 0,
-        completedGames: 0,
-        completedLessons: 0,
-        totalGames: 1, // compiler-journey
-        totalLessons: 1, // javascript-basics
-        maxPossibleScore: 100,
-        gameScore: 0,
-        lessonScore: 0,
-      },
-      {
-        id: 3,
-        label: "الوحدة الرابعة: مبادئ البرمجة بلغة سكراتش",
-        percentage: 0,
-        color: "sky",
-        completed: false,
-        requiredScore: 90,
-        totalScore: 0,
-        completedGames: 0,
-        completedLessons: 0,
-        totalGames: 1, // scratch-lab
-        totalLessons: 1, // data-handling
-        maxPossibleScore: 100,
-        gameScore: 0,
-        lessonScore: 0,
-      },
-    ];
+      };
+    });
   }, []);
 
   // 🎯 Get games by unit
   const getGamesByUnit = useCallback(
     (unitId) => {
-      return gamesData.filter((game) => game.unit === unitId);
+      const u = units.find((x) => x.id === unitId);
+      return u ? u.games || [] : [];
     },
-    [gamesData]
+    [units]
   );
 
   // 🎯 Get lessons by unit
   const getLessonsByUnit = useCallback(
     (unitId) => {
-      return lessonsData.filter((lesson) => lesson.unit === unitId);
+      const u = units.find((x) => x.id === unitId);
+      return u ? u.lessons || [] : [];
     },
-    [lessonsData]
+    [units]
   );
 
   // 🎯 Check if unit is unlocked
@@ -355,26 +294,29 @@ export default function MainComDep() {
   }, [progressData]);
 
   // 🎯 Get grid classes for responsive design
+  // Accepts either a numeric count (preferred) or the special string 'stats'.
+  // This keeps layout flexible: small counts shrink columns, large counts expand.
   const getGridClasses = useCallback(
-    (type) => {
-      switch (type) {
-        case "lessons":
-          return isMobile
-            ? "grid-cols-1"
-            : isTablet
-            ? "grid-cols-2"
-            : "grid-cols-3";
-        case "games":
-          return isMobile
-            ? "grid-cols-1"
-            : isTablet
-            ? "grid-cols-2"
-            : "grid-cols-3";
-        case "stats":
-          return isMobile ? "grid-cols-2" : "grid-cols-4";
-        default:
-          return "grid-cols-1";
+    (countOrKey) => {
+      // Preserve the old 'stats' behavior when explicitly requested
+      if (typeof countOrKey === "string" && countOrKey === "stats") {
+        return isMobile ? "grid-cols-2" : "grid-cols-4";
       }
+
+      const count = Number(countOrKey) || 0;
+
+      if (isMobile) return "grid-cols-1";
+      if (isTablet) {
+        if (count <= 1) return "grid-cols-1";
+        if (count === 2) return "grid-cols-2";
+        return "grid-cols-2"; // tablet stays at 2 cols for readability
+      }
+
+      // Desktop
+      if (count <= 1) return "grid-cols-1";
+      if (count === 2) return "grid-cols-2";
+      if (count === 3) return "grid-cols-3";
+      return "grid-cols-3"; // don't exceed 3 by default; keep cards readable
     },
     [isMobile, isTablet]
   );
@@ -385,23 +327,8 @@ export default function MainComDep() {
       console.log("❌ No user UID found");
       return {};
     }
-
     try {
-      const scoresCollection = collection(db, "users", userData.uid, "scores");
-      const scoresSnapshot = await getDocs(scoresCollection);
-      const scores = {};
-
-      scoresSnapshot.forEach((doc) => {
-        const data = doc.data();
-        scores[data.gameId] = {
-          score: data.score || 0,
-          completed: data.completed || false,
-          lastPlayed: data.lastPlayed,
-          unitId: data.unitId,
-          points: data.points || 0,
-        };
-      });
-
+      const scores = await getUserScores(userData.uid);
       console.log("🎮 Loaded individual game scores:", scores);
       return scores;
     } catch (error) {
@@ -416,26 +343,8 @@ export default function MainComDep() {
       console.log("❌ No user UID found for lesson completions");
       return {};
     }
-
     try {
-      const lessonsCollection = collection(
-        db,
-        "users",
-        userData.uid,
-        "lessons"
-      );
-      const lessonsSnapshot = await getDocs(lessonsCollection);
-      const completions = {};
-
-      lessonsSnapshot.forEach((doc) => {
-        const data = doc.data();
-        completions[data.lessonId] = {
-          completed: data.completed || false,
-          lastUpdated: data.lastUpdated,
-          unitId: data.unitId,
-        };
-      });
-
+      const completions = await getUserLessons(userData.uid);
       console.log("📚 Loaded lesson completions:", completions);
       return completions;
     } catch (error) {
@@ -447,8 +356,10 @@ export default function MainComDep() {
   // 🎯 Calculate unit progress based on game scores AND lessons
   const calculateUnitProgress = useCallback(
     (unit, gameScores, lessonCompletions) => {
-      const unitGames = getGamesByUnit(unit.id);
-      const unitLessons = getLessonsByUnit(unit.id);
+      // Use the canonical `units` model to get games/lessons metadata
+      const unitDef = units.find((u) => u.id === unit.id) || {};
+      const unitGames = unitDef.games || [];
+      const unitLessons = unitDef.lessons || [];
 
       // Calculate game points (60% of unit)
       let totalGameScore = 0;
@@ -457,7 +368,7 @@ export default function MainComDep() {
 
       unitGames.forEach((game) => {
         const gameScore = gameScores[game.gameId]?.score || 0;
-        const gameMaxScore = game.points || 100;
+        const gameMaxScore = game.maxPoints || game.points || 100;
 
         totalGameScore += Math.min(gameScore, gameMaxScore);
         maxPossibleGameScore += gameMaxScore;
@@ -469,23 +380,32 @@ export default function MainComDep() {
 
       // Calculate lesson points (40% of unit)
       let totalLessonScore = 0;
-      const maxPossibleLessonScore = 40; // Fixed 40 points for lessons
+      let maxPossibleLessonScore = 0;
       let completedLessons = 0;
 
       unitLessons.forEach((lesson) => {
+        const lMax = lesson.maxPoints || 40;
+        maxPossibleLessonScore += lMax;
         if (lessonCompletions[lesson.id]?.completed) {
           completedLessons++;
-          totalLessonScore += maxPossibleLessonScore / unitLessons.length; // Distribute 40 points evenly among lessons
+          totalLessonScore += lMax;
         }
       });
 
-      // Combine scores: Games (scaled to 60 points) + Lessons (40 points)
+      // Combine scores: scale games and lessons into unit percentages using unit weights
       const gameContribution =
         maxPossibleGameScore > 0
-          ? (totalGameScore / maxPossibleGameScore) * 60
+          ? (totalGameScore / maxPossibleGameScore) *
+            ((unitDef.gameWeight || 0.6) * 100)
           : 0;
 
-      const totalScore = gameContribution + totalLessonScore;
+      const lessonContribution =
+        maxPossibleLessonScore > 0
+          ? (totalLessonScore / maxPossibleLessonScore) *
+            ((unitDef.lessonWeight || 0.4) * 100)
+          : 0;
+
+      const totalScore = gameContribution + lessonContribution;
       const percentage = Math.min(100, Math.round(totalScore));
 
       const completed = percentage >= 100;
@@ -496,12 +416,12 @@ export default function MainComDep() {
         completed,
         completedGames,
         completedLessons,
-        maxPossibleScore: 100, // Total unit is now 100 points (40 lessons + 60 games)
+        maxPossibleScore: 100,
         gameScore: Math.round(gameContribution),
-        lessonScore: Math.round(totalLessonScore),
+        lessonScore: Math.round(lessonContribution),
       };
     },
-    [getGamesByUnit, getLessonsByUnit]
+    [units]
   );
 
   // 🎯 Calculate which units should be unlocked
@@ -529,13 +449,7 @@ export default function MainComDep() {
       console.log("❌ No user UID, skipping Firebase save");
       return;
     }
-
     try {
-      const userRef = doc(db, "users", userData.uid);
-      const progressRef = doc(db, "users", userData.uid, "progress", "main");
-      const scoresRef = doc(db, "users", userData.uid, "scores", "overall");
-      const leaderboardRef = doc(db, "leaderboard", userData.uid);
-
       const totalProgress = getTotalProgress();
       const completedGames = progressDataRef.current.reduce(
         (count, unit) => count + (unit.completedGames || 0),
@@ -549,82 +463,52 @@ export default function MainComDep() {
         (unit) => unit.completed
       ).length;
 
-      console.log("💾 Saving to Firebase:", {
+      const userProfile = {
+        email: userData.email,
+        name: userData.fullName || userData.name,
+        photoURL: userData.photoURL,
+      };
+
+      const totals = {
         totalScore: userScore,
-        totalProgress,
+        totalXP: userScore,
         completedGames,
         completedLessons,
         completedUnits,
+      };
+
+      await saveUserProgress(userData.uid, {
+        progressData: progressDataRef.current,
         unlockedUnits,
+        totalProgress,
+        userProfile,
+        totals,
       });
 
-      // Use batch write for atomic operations
-      const batch = writeBatch(db);
-
-      // Update user profile with scores
-      batch.set(
-        userRef,
-        {
-          email: userData.email,
-          name: userData.fullName || userData.name,
-          photoURL: userData.photoURL,
-          totalScore: userScore,
-          totalProgress: totalProgress,
-          completedGames: completedGames,
-          completedLessons: completedLessons,
-          completedUnits: completedUnits,
-          lastUpdated: serverTimestamp(),
-        },
-        { merge: true }
-      );
-
-      // Update progress data
-      batch.set(
-        progressRef,
-        {
-          progressData: progressDataRef.current,
-          unlockedUnits: unlockedUnits,
-          totalProgress: totalProgress,
-          lastUpdated: serverTimestamp(),
-        },
-        { merge: true }
-      );
-
-      // Update overall scores
-      batch.set(
-        scoresRef,
-        {
-          totalScore: userScore,
-          completedGames: completedGames,
-          completedLessons: completedLessons,
-          completedUnits: completedUnits,
-          lastUpdated: serverTimestamp(),
-        },
-        { merge: true }
-      );
-
-      // Update public leaderboard entry
-      batch.set(
-        leaderboardRef,
-        {
-          userId: userData.uid,
-          name: userData.fullName || userData.name,
-          photoURL: userData.photoURL,
-          totalScore: userScore,
-          completedGames: completedGames,
-          completedLessons: completedLessons,
-          completedUnits: completedUnits,
-          lastUpdated: serverTimestamp(),
-        },
-        { merge: true }
-      );
-
-      await batch.commit();
-      console.log("✅ All progress saved to Firestore successfully");
+      console.log("✅ All progress saved to Firestore (via service)");
     } catch (error) {
       console.error("❌ Error saving to Firestore:", error);
     }
   }, [userData, userScore, unlockedUnits, getTotalProgress]);
+
+  // 🎯 Debounced save scheduler to avoid rapid Firestore writes
+  const saveTimeoutRef = useRef(null);
+
+  const scheduleSave = useCallback(() => {
+    // Clear previous timer
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+
+    // Schedule save after short delay (1.5s)
+    saveTimeoutRef.current = setTimeout(() => {
+      // flush timer reference
+      saveTimeoutRef.current = null;
+      saveProgressToFirebase().catch((err) =>
+        console.error("❌ Debounced save failed:", err)
+      );
+    }, 1500);
+  }, [saveProgressToFirebase]);
 
   // 🎯 Recalculate all progress from individual game scores AND lesson completions
   const recalculateAllProgress = useCallback(async () => {
@@ -704,17 +588,11 @@ export default function MainComDep() {
       if (!userData?.uid) return;
 
       try {
-        const lessonRef = doc(db, "users", userData.uid, "lessons", lessonId);
-        await setDoc(
-          lessonRef,
-          {
-            lessonId,
-            unitId,
-            completed: true,
-            lastUpdated: serverTimestamp(),
-          },
-          { merge: true }
-        );
+        // Use centralized service helper to save lesson completion
+        await saveLessonCompletion(userData.uid, lessonId, {
+          unitId,
+          completed: true,
+        });
 
         console.log("✅ Lesson marked as completed:", lessonId);
 
@@ -753,21 +631,32 @@ export default function MainComDep() {
       });
 
       try {
-        // Write individual score doc to Firestore
+        // Use centralized helper to save game score and trigger recalculation
         if (userData?.uid) {
-          const scoreRef = doc(db, "users", userData.uid, "scores", gameId);
-          await setDoc(
-            scoreRef,
-            {
-              gameId,
-              unitId,
-              score,
-              points: score,
-              completed: completed || false,
-              lastPlayed: serverTimestamp(),
-            },
-            { merge: true }
-          );
+          // Prefer rawScore/rawMax if provided by the game; otherwise try to infer from unit/game metadata
+          const rawScore =
+            typeof gameData?.rawScore === "number"
+              ? gameData.rawScore
+              : typeof gameData?.score === "number"
+              ? gameData.score
+              : score;
+
+          const gameDef = units
+            .map((u) => u.games || [])
+            .flat()
+            .find((g) => g.gameId === gameId);
+
+          const rawMax =
+            typeof gameData?.rawMax === "number"
+              ? gameData.rawMax
+              : gameDef?.maxPoints || gameData?.points || undefined;
+
+          await saveGameScore(userData.uid, gameId, {
+            unitId,
+            rawScore,
+            rawMax,
+            completed: completed || false,
+          });
           console.log("✅ Individual score saved for", gameId);
         }
 
@@ -933,7 +822,7 @@ export default function MainComDep() {
   useEffect(() => {
     if (isLoading || !userData?.uid || progressData.length === 0) return;
 
-    // Only save if data actually changed
+    // Only schedule save if data actually changed
     const shouldSave =
       JSON.stringify(progressData) !==
         JSON.stringify(progressDataRef.current) ||
@@ -942,14 +831,15 @@ export default function MainComDep() {
         JSON.stringify(lessonCompletionsRef.current);
 
     if (shouldSave) {
-      console.log("🔄 Data changed, saving to Firebase...");
+      console.log("🔄 Data changed, scheduling save to Firebase...");
 
       // Update refs first
       progressDataRef.current = progressData;
       gameScoresRef.current = gameScores;
       lessonCompletionsRef.current = lessonCompletions;
 
-      saveProgressToFirebase();
+      // Use debounced scheduler to reduce writes
+      scheduleSave();
     }
   }, [
     progressData,
@@ -959,8 +849,22 @@ export default function MainComDep() {
     lessonCompletions,
     userData?.uid,
     isLoading,
-    saveProgressToFirebase,
+    scheduleSave,
   ]);
+
+  // Flush any pending save on unmount or when user changes
+  useEffect(() => {
+    return () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = null;
+        // best-effort synchronous save (fire-and-forget)
+        saveProgressToFirebase().catch((err) =>
+          console.error("❌ Flush save failed on unmount:", err)
+        );
+      }
+    };
+  }, [saveProgressToFirebase]);
 
   // 🎯 REAL-TIME Firestore listeners for game scores
   useEffect(() => {
@@ -1104,50 +1008,10 @@ export default function MainComDep() {
       )
     ) {
       try {
-        // Delete all scores
-        const scoresCollection = collection(
-          db,
-          "users",
-          userData.uid,
-          "scores"
-        );
-        const scoresSnapshot = await getDocs(scoresCollection);
+        // Use service helper to reset user progress in Firestore
+        await resetUserProgress(userData.uid);
 
-        const deleteScorePromises = scoresSnapshot.docs.map((doc) =>
-          setDoc(
-            doc.ref,
-            {
-              score: 0,
-              completed: false,
-              lastPlayed: serverTimestamp(),
-            },
-            { merge: true }
-          )
-        );
-
-        // Delete all lesson completions
-        const lessonsCollection = collection(
-          db,
-          "users",
-          userData.uid,
-          "lessons"
-        );
-        const lessonsSnapshot = await getDocs(lessonsCollection);
-
-        const deleteLessonPromises = lessonsSnapshot.docs.map((doc) =>
-          setDoc(
-            doc.ref,
-            {
-              completed: false,
-              lastUpdated: serverTimestamp(),
-            },
-            { merge: true }
-          )
-        );
-
-        await Promise.all([...deleteScorePromises, ...deleteLessonPromises]);
-
-        // Reset progress
+        // Reset local state
         const initialProgress = getInitialProgressData();
         setProgressData(initialProgress);
         setUnlockedUnits([0]);
@@ -1457,303 +1321,242 @@ export default function MainComDep() {
           className={`space-y-4 sm:space-y-6 ${isDesktop ? "w-2/3" : "w-full"}`}
         >
           {/* Units Section */}
-          {progressData.map((unit) => (
-            <div key={unit.id} className="space-y-4">
-              {/* Unit Header */}
-              <div
-                className={`rounded-2xl p-4 sm:p-6 shadow-lg ${
-                  darkMode ? "bg-gray-800/60" : "bg-white"
-                } ${!isUnitUnlocked(unit.id) ? "opacity-60" : ""}`}
-              >
+          {progressData.map((unit) => {
+            const unitDef = units.find((u) => u.id === unit.id) || {};
+            return (
+              <div key={unit.id} className="space-y-4">
+                {/* Unit Header */}
                 <div
-                  className={`flex items-center justify-between mb-4 sm:mb-6 ${
-                    isMobile ? "flex-col gap-2 items-start" : ""
-                  }`}
+                  className={`rounded-2xl p-4 sm:p-6 shadow-lg ${
+                    darkMode ? "bg-gray-800/60" : "bg-white"
+                  } ${!isUnitUnlocked(unit.id) ? "opacity-60" : ""}`}
                 >
-                  <h2
-                    className={`font-bold text-green-400 ${
-                      isMobile ? "text-xl" : "text-2xl"
+                  <div
+                    className={`flex items-center justify-between mb-4 sm:mb-6 ${
+                      isMobile ? "flex-col gap-2 items-start" : ""
                     }`}
                   >
-                    {unit.label}
-                  </h2>
-                  <div className="flex items-center space-x-2">
-                    {!isUnitUnlocked(unit.id) && (
-                      <Lock className="text-red-500" />
-                    )}
-                    <span
-                      className={`px-3 py-1 rounded-full bg-green-500/20 text-green-600 dark:text-green-400 ${
-                        isMobile ? "text-sm" : "text-base"
-                      }`}
-                    >
-                      {unit.percentage}% مكتمل
-                    </span>
-                  </div>
-                </div>
-
-                {/* Lessons for this unit */}
-                {getLessonsByUnit(unit.id).length > 0 && (
-                  <div className="mb-6 sm:mb-8">
-                    <h3
-                      className={`font-bold mb-4 sm:mb-6 text-green-400 text-center ${
+                    <h2
+                      className={`font-bold text-green-400 ${
                         isMobile ? "text-xl" : "text-2xl"
                       }`}
                     >
-                      🧩 الدروس التفاعلية (40 نقطة)
-                    </h3>
-                    <div
-                      className={`grid gap-4 sm:gap-6 ${getGridClasses(
-                        "lessons"
-                      )}`}
-                    >
-                      {getLessonsByUnit(unit.id).map((lesson, lessonIndex) => {
-                        const isCompleted = isLessonCompleted(lesson.id);
-                        const isUnlocked = isUnitUnlocked(unit.id);
+                      {unit.label}
+                    </h2>
+                    <div className="flex items-center space-x-2">
+                      {!isUnitUnlocked(unit.id) && (
+                        <Lock className="text-red-500" />
+                      )}
+                      <span
+                        className={`px-3 py-1 rounded-full bg-green-500/20 text-green-600 dark:text-green-400 ${
+                          isMobile ? "text-sm" : "text-base"
+                        }`}
+                      >
+                        {unit.percentage}% مكتمل
+                      </span>
+                    </div>
+                  </div>
 
-                        return (
-                          <div
-                            key={lessonIndex}
-                            className={`relative rounded-2xl overflow-hidden shadow-lg transform transition-all duration-500 hover:scale-[1.05] cursor-pointer group ${
-                              !isUnlocked ? "opacity-50 cursor-not-allowed" : ""
-                            }`}
-                            onClick={() => {
-                              if (isUnlocked) {
-                                markLessonCompleted(lesson.id, unit.id);
-                                handleOpen(
-                                  `lesson-${unit.id}-${lessonIndex}`,
-                                  unit.id,
-                                  null,
-                                  lesson.id
-                                );
+                  {/* Lessons for this unit */}
+                  {getLessonsByUnit(unit.id).length > 0 && (
+                    <div className="mb-6 sm:mb-8">
+                      <h3
+                        className={`font-bold mb-4 sm:mb-6 text-green-400 text-center ${
+                          isMobile ? "text-xl" : "text-2xl"
+                        }`}
+                      >
+                        🧩 الدروس التفاعلية (
+                        {Math.round(
+                          (units.find((u) => u.id === unit.id)?.lessonWeight ||
+                            0.4) * 100
+                        )}{" "}
+                        نقطة)
+                      </h3>
+                      <div
+                        className={`grid gap-4 sm:gap-6 ${getGridClasses(
+                          getLessonsByUnit(unit.id).length
+                        )}`}
+                      >
+                        {getLessonsByUnit(unit.id).map(
+                          (lesson, lessonIndex) => {
+                            const isCompleted = isLessonCompleted(lesson.id);
+                            const isUnlocked = isUnitUnlocked(unit.id);
+
+                            return (
+                              <div
+                                key={lessonIndex}
+                                className={`relative rounded-2xl overflow-hidden shadow-lg transform transition-all duration-500 hover:scale-[1.05] cursor-pointer group ${
+                                  !isUnlocked
+                                    ? "opacity-50 cursor-not-allowed"
+                                    : ""
+                                }`}
+                                onClick={() => {
+                                  if (isUnlocked) {
+                                    markLessonCompleted(lesson.id, unit.id);
+                                    handleOpen(
+                                      `lesson-${unit.id}-${lessonIndex}`,
+                                      unit.id,
+                                      null,
+                                      lesson.id
+                                    );
+                                  }
+                                }}
+                              >
+                                {/* Animated Background Gradient */}
+                                <div
+                                  className={`absolute inset-0 scale-x-0 group-hover:scale-x-100 origin-left transition-transform duration-700 bg-gradient-to-br ${lesson.gradient}`}
+                                ></div>
+
+                                {/* Completion Checkmark */}
+                                {isCompleted && (
+                                  <div className="absolute top-2 right-2 z-20">
+                                    <CheckCircle className="text-green-500 text-2xl bg-white rounded-full" />
+                                  </div>
+                                )}
+
+                                {/* Lock Overlay */}
+                                {!isUnlocked && (
+                                  <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-10">
+                                    <Lock className="text-white text-2xl sm:text-4xl" />
+                                  </div>
+                                )}
+
+                                {/* Content */}
+                                <div className="relative z-10 flex flex-col items-center justify-center p-4 sm:p-6 text-center min-h-[120px] sm:min-h-[140px]">
+                                  <span className="text-2xl sm:text-3xl mb-2 sm:mb-3 transition-transform duration-500 group-hover:animate-bounce">
+                                    {lesson.emoji}
+                                  </span>
+                                  <span
+                                    className={`font-bold ${
+                                      isMobile ? "text-base" : "text-lg"
+                                    }`}
+                                  >
+                                    {lesson.title}
+                                  </span>
+                                  <p
+                                    className={`mt-2 opacity-75 ${
+                                      isMobile ? "text-xs" : "text-sm"
+                                    }`}
+                                  >
+                                    {lesson.description}
+                                  </p>
+                                  <div className="mt-2 text-xs text-gray-600 bg-white/70 px-2 py-1 rounded-full">
+                                    {isCompleted ? "مكتمل" : "انقر لبدء الدرس"}
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          }
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Games for this unit */}
+                  {getGamesByUnit(unit.id).length > 0 && (
+                    <div>
+                      <h3
+                        className={`font-bold mb-4 sm:mb-6 text-purple-400 text-center ${
+                          isMobile ? "text-xl" : "text-2xl"
+                        }`}
+                      >
+                        🎮 الألعاب التعليمية (
+                        {Math.round(
+                          (units.find((u) => u.id === unit.id)?.gameWeight ||
+                            0.6) * 100
+                        )}{" "}
+                        نقطة)
+                      </h3>
+                      <div
+                        className={`grid gap-4 sm:gap-6 ${getGridClasses(
+                          getGamesByUnit(unit.id).length
+                        )}`}
+                      >
+                        {getGamesByUnit(unit.id).map((game, gameIndex) => {
+                          const isUnlocked = isUnitUnlocked(unit.id);
+                          const gameScore = getGameScore(game.gameId);
+                          const isCompleted = isGameCompleted(game.gameId);
+
+                          return (
+                            <div
+                              key={gameIndex}
+                              className={`relative rounded-2xl overflow-hidden shadow-lg transform transition-all duration-500 cursor-pointer group ${
+                                isUnlocked
+                                  ? "hover:scale-[1.05] hover:shadow-2xl"
+                                  : "opacity-60 cursor-not-allowed"
+                              }`}
+                              onClick={() =>
+                                isUnlocked &&
+                                handleOpen(game.path, unit.id, game.gameId)
                               }
-                            }}
-                          >
-                            {/* Animated Background Gradient */}
-                            <div
-                              className={`absolute inset-0 scale-x-0 group-hover:scale-x-100 origin-left transition-transform duration-700 bg-gradient-to-br ${lesson.gradient}`}
-                            ></div>
+                            >
+                              {/* Enhanced Hover Effect - From Both Sides */}
+                              <div
+                                className={`absolute inset-y-0 left-0 w-0 group-hover:w-1/2 transition-all duration-700 bg-gradient-to-r ${game.gradientLeft}`}
+                              ></div>
+                              <div
+                                className={`absolute inset-y-0 right-0 w-0 group-hover:w-1/2 transition-all duration-700 bg-gradient-to-l ${game.gradientRight}`}
+                              ></div>
 
-                            {/* Completion Checkmark */}
-                            {isCompleted && (
-                              <div className="absolute top-2 right-2 z-20">
-                                <CheckCircle className="text-green-500 text-2xl bg-white rounded-full" />
-                              </div>
-                            )}
+                              {/* Lock Overlay */}
+                              {!isUnlocked && (
+                                <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-10">
+                                  <Lock className="text-white text-2xl sm:text-4xl" />
+                                </div>
+                              )}
 
-                            {/* Lock Overlay */}
-                            {!isUnlocked && (
-                              <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-10">
-                                <Lock className="text-white text-2xl sm:text-4xl" />
-                              </div>
-                            )}
+                              {/* Completion Checkmark */}
+                              {isCompleted && (
+                                <div className="absolute top-2 right-2 z-20">
+                                  <CheckCircle className="text-green-500 text-2xl bg-white rounded-full" />
+                                </div>
+                              )}
 
-                            {/* Content */}
-                            <div className="relative z-10 flex flex-col items-center justify-center p-4 sm:p-6 text-center min-h-[120px] sm:min-h-[140px]">
-                              <span className="text-2xl sm:text-3xl mb-2 sm:mb-3 transition-transform duration-500 group-hover:animate-bounce">
-                                {lesson.emoji}
-                              </span>
-                              <span
-                                className={`font-bold ${
-                                  isMobile ? "text-base" : "text-lg"
-                                }`}
-                              >
-                                {lesson.title}
-                              </span>
-                              <p
-                                className={`mt-2 opacity-75 ${
-                                  isMobile ? "text-xs" : "text-sm"
-                                }`}
-                              >
-                                {lesson.description}
-                              </p>
-                              <div className="mt-2 text-xs text-gray-600 bg-white/70 px-2 py-1 rounded-full">
-                                {isCompleted ? "مكتمل" : "انقر لبدء الدرس"}
+                              {/* Content */}
+                              <div className="relative z-10 flex flex-col items-center justify-center p-4 sm:p-6 text-center text-black min-h-[160px] sm:min-h-[200px]">
+                                <span
+                                  className={`mb-3 sm:mb-4 transform group-hover:scale-110 transition-transform duration-300 ${
+                                    isMobile ? "text-2xl" : "text-4xl"
+                                  }`}
+                                >
+                                  {game.icon}
+                                </span>
+                                <h4
+                                  className={`font-bold mb-2 drop-shadow ${
+                                    isMobile ? "text-base" : "text-lg"
+                                  }`}
+                                >
+                                  {game.title}
+                                </h4>
+                                <p
+                                  className={`mb-3 opacity-90 drop-shadow ${
+                                    isMobile ? "text-xs" : "text-sm"
+                                  }`}
+                                >
+                                  {game.description}
+                                </p>
+                                <div className="flex justify-between w-full text-xs mt-auto">
+                                  <span className="px-2 py-1 rounded-full bg-white/70 backdrop-blur-sm text-black">
+                                    {game.level}
+                                  </span>
+                                  <span className="px-2 py-1 rounded-full bg-yellow-500/70 backdrop-blur-sm text-black">
+                                    {gameScore}/
+                                    {game.maxPoints || game.points || 100} نقطة
+                                  </span>
+                                </div>
                               </div>
                             </div>
-                          </div>
-                        );
-                      })}
+                          );
+                        })}
+                      </div>
                     </div>
-                  </div>
-                )}
-
-                {/* Games for this unit */}
-                {getGamesByUnit(unit.id).length > 0 && (
-                  <div>
-                    <h3
-                      className={`font-bold mb-4 sm:mb-6 text-purple-400 text-center ${
-                        isMobile ? "text-xl" : "text-2xl"
-                      }`}
-                    >
-                      🎮 الألعاب التعليمية (60 نقطة)
-                    </h3>
-                    <div
-                      className={`grid gap-4 sm:gap-6 ${getGridClasses(
-                        "games"
-                      )}`}
-                    >
-                      {getGamesByUnit(unit.id).map((game, gameIndex) => {
-                        const isUnlocked = isUnitUnlocked(unit.id);
-                        const gameScore = getGameScore(game.gameId);
-                        const isCompleted = isGameCompleted(game.gameId);
-
-                        return (
-                          <div
-                            key={gameIndex}
-                            className={`relative rounded-2xl overflow-hidden shadow-lg transform transition-all duration-500 cursor-pointer group ${
-                              isUnlocked
-                                ? "hover:scale-[1.05] hover:shadow-2xl"
-                                : "opacity-60 cursor-not-allowed"
-                            }`}
-                            onClick={() =>
-                              isUnlocked &&
-                              handleOpen(game.path, unit.id, game.gameId)
-                            }
-                          >
-                            {/* Enhanced Hover Effect - From Both Sides */}
-                            <div
-                              className={`absolute inset-y-0 left-0 w-0 group-hover:w-1/2 transition-all duration-700 bg-gradient-to-r ${game.gradientLeft}`}
-                            ></div>
-                            <div
-                              className={`absolute inset-y-0 right-0 w-0 group-hover:w-1/2 transition-all duration-700 bg-gradient-to-l ${game.gradientRight}`}
-                            ></div>
-
-                            {/* Lock Overlay */}
-                            {!isUnlocked && (
-                              <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-10">
-                                <Lock className="text-white text-2xl sm:text-4xl" />
-                              </div>
-                            )}
-
-                            {/* Completion Checkmark */}
-                            {isCompleted && (
-                              <div className="absolute top-2 right-2 z-20">
-                                <CheckCircle className="text-green-500 text-2xl bg-white rounded-full" />
-                              </div>
-                            )}
-
-                            {/* Content */}
-                            <div className="relative z-10 flex flex-col items-center justify-center p-4 sm:p-6 text-center text-black min-h-[160px] sm:min-h-[200px]">
-                              <span
-                                className={`mb-3 sm:mb-4 transform group-hover:scale-110 transition-transform duration-300 ${
-                                  isMobile ? "text-2xl" : "text-4xl"
-                                }`}
-                              >
-                                {game.icon}
-                              </span>
-                              <h4
-                                className={`font-bold mb-2 drop-shadow ${
-                                  isMobile ? "text-base" : "text-lg"
-                                }`}
-                              >
-                                {game.title}
-                              </h4>
-                              <p
-                                className={`mb-3 opacity-90 drop-shadow ${
-                                  isMobile ? "text-xs" : "text-sm"
-                                }`}
-                              >
-                                {game.description}
-                              </p>
-                              <div className="flex justify-between w-full text-xs mt-auto">
-                                <span className="px-2 py-1 rounded-full bg-white/70 backdrop-blur-sm text-black">
-                                  {game.level}
-                                </span>
-                                <span className="px-2 py-1 rounded-full bg-yellow-500/70 backdrop-blur-sm text-black">
-                                  {gameScore}/{game.points} نقطة
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          ))}
-
-          {/* Announcements */}
-          <div
-            className={`rounded-2xl p-4 sm:p-6 shadow-lg ${
-              darkMode
-                ? "bg-gradient-to-br from-gray-800 to-purple-900/20 text-white"
-                : "bg-gradient-to-br from-white to-purple-50 text-gray-800"
-            } border-2 ${
-              darkMode ? "border-purple-500/30" : "border-purple-200"
-            }`}
-          >
-            <h3
-              className={`font-bold mb-4 flex items-center ${
-                isMobile ? "text-lg" : "text-xl"
-              }`}
-            >
-              <Campaign className="mr-2 text-amber-400" />
-              <span className="bg-gradient-to-r from-amber-400 to-orange-400 bg-clip-text text-transparent">
-                الإعلانات والأحداث
-              </span>
-            </h3>
-            <div className="space-y-3 sm:space-y-4">
-              {announcementsData.map((announcement, i) => (
-                <div
-                  key={i}
-                  className={`relative p-3 sm:p-4 rounded-xl cursor-pointer overflow-hidden group border-l-4 transform transition-all duration-300 hover:scale-[1.02] ${
-                    darkMode
-                      ? "bg-gray-700/30 hover:bg-gray-700/50"
-                      : "bg-white hover:bg-gray-50"
-                  }`}
-                  style={{
-                    borderColor:
-                      announcement.color === "amber"
-                        ? darkMode
-                          ? "#FBBF24"
-                          : "#D97706"
-                        : announcement.color === "teal"
-                        ? darkMode
-                          ? "#14B8A6"
-                          : "#059669"
-                        : darkMode
-                        ? "#3B82F6"
-                        : "#2563EB",
-                  }}
-                >
-                  <div className="relative z-10 flex items-center space-x-2 sm:space-x-3 space-x-reverse">
-                    <span className={isMobile ? "text-xl" : "text-2xl"}>
-                      {announcement.icon}
-                    </span>
-                    <div className="flex-1">
-                      <p
-                        className={`font-bold ${
-                          isMobile ? "text-base" : "text-lg"
-                        }`}
-                      >
-                        {announcement.title}
-                      </p>
-                      <p
-                        className={`${isMobile ? "text-xs" : "text-sm"} ${
-                          darkMode ? "text-gray-300" : "text-gray-600"
-                        }`}
-                      >
-                        {announcement.subtitle}
-                      </p>
-                    </div>
-                    <div
-                      className={`px-2 py-1 rounded-full font-bold ${
-                        isMobile ? "text-xs" : "text-sm"
-                      } ${
-                        darkMode
-                          ? "bg-purple-500/30 text-purple-300"
-                          : "bg-purple-100 text-purple-700"
-                      }`}
-                    >
-                      جديد
-                    </div>
-                  </div>
+                  )}
                 </div>
-              ))}
-            </div>
-          </div>
+              </div>
+            );
+          })}
+
+          {/* Announcements removed - simplified layout */}
 
           {/* User Stats Card */}
           <div

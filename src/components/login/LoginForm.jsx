@@ -10,13 +10,16 @@ import {
 } from "firebase/auth";
 import {
   doc,
-  setDoc,
   getDoc,
   query,
   collection,
   where,
   getDocs,
 } from "firebase/firestore";
+import {
+  ensureUserInitialized,
+  updateUserFields,
+} from "../../FireBaseDatabase/firestoreService";
 
 const LoginForm = () => {
   const [formState, setFormState] = useState({ identifier: "", password: "" });
@@ -72,12 +75,15 @@ const LoginForm = () => {
 
       const email = userDoc.data().email;
       await signInWithEmailAndPassword(auth, email, formState.password);
-
-      await setDoc(
-        doc(db, "users", userDoc.id),
-        { lastLogin: Date.now() },
-        { merge: true }
-      );
+      // Ensure user exists in canonical format and update lastLogin
+      await ensureUserInitialized(userDoc.id, {
+        fullName: userDoc.data().fullName,
+        username: userDoc.data().username,
+        email: userDoc.data().email,
+        provider: userDoc.data().provider || "email",
+        agree: userDoc.data().agree || false,
+      });
+      await updateUserFields(userDoc.id, { lastLogin: Date.now() });
 
       window.location.href = "/dashboard";
     } catch (err) {
@@ -99,29 +105,26 @@ const LoginForm = () => {
       const user = result.user;
       const userRef = doc(db, "users", user.uid);
       const userSnap = await getDoc(userRef);
-
       if (!userSnap.exists() || !userSnap.data().passwordSet) {
-        if (!userSnap.exists()) {
-          await setDoc(userRef, {
-            fullName: user.displayName || "",
-            username: user.displayName
-              ? user.displayName.replace(/\s+/g, "")
-              : "",
-            email: user.email,
-            provider: "google",
-            agree: true,
-            lastLogin: Date.now(),
-          });
-        } else {
-          await setDoc(
-            userRef,
-            { lastLogin: Date.now(), provider: "google" },
-            { merge: true }
-          );
-        }
+        // Centralize initialization
+        await ensureUserInitialized(user.uid, {
+          fullName: user.displayName || "",
+          username: user.displayName
+            ? user.displayName.replace(/\s+/g, "")
+            : "",
+          email: user.email,
+          provider: "google",
+          agree: true,
+        });
+
         setGoogleUser(user);
         setSetPasswordMode(true);
       } else {
+        // Update last login for existing users
+        await updateUserFields(user.uid, {
+          lastLogin: Date.now(),
+          provider: "google",
+        });
         window.location.href = "/dashboard";
       }
     } catch (err) {
@@ -143,11 +146,10 @@ const LoginForm = () => {
 
     try {
       await updatePassword(googleUser, newPassword);
-      await setDoc(
-        doc(db, "users", googleUser.uid),
-        { passwordSet: true, lastLogin: Date.now() },
-        { merge: true }
-      );
+      await updateUserFields(googleUser.uid, {
+        passwordSet: true,
+        lastLogin: Date.now(),
+      });
 
       setMessage(
         "✅ تم إضافة كلمة المرور بنجاح! يمكنك الآن تسجيل الدخول باستخدام البريد وكلمة المرور."

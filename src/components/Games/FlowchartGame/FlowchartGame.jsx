@@ -1,6 +1,10 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import Lottie from "lottie-react";
-import { doc, getDoc, setDoc } from "firebase/firestore";
+import { useLocation } from "react-router-dom";
+import {
+  saveGameScore,
+  getUserScores,
+} from "../../../FireBaseDatabase/firestoreService";
 
 // Lottie animations
 import startAnim from "./lottie/start.json";
@@ -81,6 +85,14 @@ const NodeComponent = ({
 
 // Main
 export default function FlowchartGame({ db, userId = "guest" }) {
+  const location = useLocation();
+  const routeState = location.state || {};
+  const routeUserData = routeState.userData || null;
+  const routeUnitId = routeState.unitId || null;
+  const routeGameId = routeState.gameId || null;
+  const effectiveUserId = routeUserData?.uid || userId;
+  const effectiveUnitId = routeUnitId;
+  const effectiveGameId = routeGameId;
   const [level, setLevel] = useState(0);
   const [score, setScore] = useState(0);
   const [timer, setTimer] = useState(60);
@@ -190,39 +202,73 @@ export default function FlowchartGame({ db, userId = "guest" }) {
     setNodesPositions(pos);
   }, [repeatedNodes]);
 
-  // load saved progress from Firestore
+  // load saved score from centralized service (per-game scores)
   useEffect(() => {
-    if (!db) return;
-    const loadProgress = async () => {
+    if (!effectiveUserId || !effectiveGameId) return;
+
+    const loadScores = async () => {
       try {
-        const ref = doc(db, "progress", userId);
-        const snap = await getDoc(ref);
-        if (snap.exists()) {
-          const data = snap.data();
-          setScore(data.score || 0);
-          setLevel(data.level || 0);
-          setTimer(data.timer || 60);
+        const scores = await getUserScores(effectiveUserId);
+        const myScore = scores?.[effectiveGameId];
+        if (myScore) {
+          // Prefer rawScore if available, otherwise try to reconstruct from normalized
+          if (typeof myScore.rawScore === "number") {
+            setScore(myScore.rawScore || 0);
+          } else if (typeof myScore.score === "number") {
+            const inferredRawMax = myScore.rawMax || QUESTIONS.length;
+            const inferredRaw = Math.round(
+              (myScore.score / 100) * inferredRawMax
+            );
+            setScore(inferredRaw || 0);
+          } else {
+            setScore(0);
+          }
+          // try to infer level from stored unitId or other metadata if present
+          setLevel(myScore.currentLevel || 0);
         }
       } catch (err) {
-        console.error("Error loading progress:", err);
+        console.error("Error loading saved scores:", err);
       }
     };
-    loadProgress();
-  }, [db, userId]);
+
+    loadScores();
+  }, [effectiveUserId, effectiveGameId]);
 
   // save progress when important values change
   useEffect(() => {
-    if (!db || !gameStarted) return;
-    const saveProgress = async () => {
+    if (!gameStarted) return;
+    // Persist the game score via central service when it changes
+    const persist = async () => {
+      if (!effectiveUserId || !effectiveGameId) return;
       try {
-        const ref = doc(db, "progress", userId);
-        await setDoc(ref, { score, level, timer }, { merge: true });
+        // Send rawScore/rawMax so central service can normalize to 0-100
+        const rawScore = typeof score === "number" ? score : 0;
+        const rawMax = QUESTIONS.length;
+        await saveGameScore(effectiveUserId, effectiveGameId, {
+          unitId: effectiveUnitId,
+          rawScore,
+          rawMax,
+          // keep points/score fields backward-compatible (service will compute normalized)
+          points: null,
+          completed: gameOver,
+        });
       } catch (err) {
-        console.error("Error saving progress:", err);
+        console.error("Error saving flowchart score (service):", err);
       }
     };
-    saveProgress();
-  }, [db, userId, score, level, timer, gameStarted]);
+    // Debounce slightly to avoid too many writes
+    const id = setTimeout(persist, 300);
+    return () => clearTimeout(id);
+  }, [
+    score,
+    level,
+    timer,
+    gameStarted,
+    gameOver,
+    effectiveUserId,
+    effectiveGameId,
+    effectiveUnitId,
+  ]);
 
   // init / resize
   useEffect(() => {

@@ -9,8 +9,12 @@ import {
   signInWithPopup,
   updatePassword,
 } from "firebase/auth";
-import { doc, setDoc, getDoc } from "firebase/firestore";
+import { doc, getDoc } from "firebase/firestore";
 import logo from "../../assets/logo/logo.png";
+import {
+  ensureUserInitialized,
+  updateUserFields,
+} from "../../FireBaseDatabase/firestoreService";
 
 const RegisterForm = () => {
   const [formState, setFormState] = useState({
@@ -74,15 +78,14 @@ const RegisterForm = () => {
         password
       );
       const user = userCredential.user;
-      const userRef = doc(db, "users", user.uid);
 
-      await setDoc(userRef, {
+      // Centralize user creation/update through service helper
+      await ensureUserInitialized(user.uid, {
         fullName,
         username,
         email,
         provider: "email",
         agree,
-        lastLogin: Date.now(),
       });
 
       showSuccess("✅ تم إنشاء الحساب بنجاح! سيتم تحويلك إلى تسجيل الدخول...");
@@ -126,24 +129,18 @@ const RegisterForm = () => {
       const userSnap = await getDoc(userRef);
 
       if (!userSnap.exists() || !userSnap.data().passwordSet) {
-        if (!userSnap.exists()) {
-          await setDoc(userRef, {
-            fullName: user.displayName || "",
-            username: user.displayName
-              ? user.displayName.replace(/\s+/g, "")
-              : "",
-            email: user.email || "",
-            provider: "google",
-            agree: true,
-            lastLogin: Date.now(),
-          });
-        } else {
-          await setDoc(
-            userRef,
-            { lastLogin: Date.now(), provider: "google" },
-            { merge: true }
-          );
-        }
+        // Ensure the user doc exists with canonical fields
+        await ensureUserInitialized(user.uid, {
+          fullName: user.displayName || "",
+          username: user.displayName
+            ? user.displayName.replace(/\s+/g, "")
+            : "",
+          email: user.email || "",
+          provider: "google",
+          agree: true,
+        });
+
+        // Still set password mode for first-time Google users
         setGoogleUser(user);
         setGoogleSetPasswordMode(true);
       } else {
@@ -165,11 +162,10 @@ const RegisterForm = () => {
     setLoading(true);
     try {
       await updatePassword(googleUser, newPassword);
-      await setDoc(
-        doc(db, "users", googleUser.uid),
-        { passwordSet: true, lastLogin: Date.now() },
-        { merge: true }
-      );
+      await updateUserFields(googleUser.uid, {
+        passwordSet: true,
+        lastLogin: Date.now(),
+      });
       showSuccess("✅ تم إضافة كلمة المرور بنجاح!");
       setGoogleSetPasswordMode(false);
       setTimeout(() => navigate("/login"), 2000);

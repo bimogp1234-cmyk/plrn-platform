@@ -51,6 +51,11 @@ import {
   limit,
 } from "firebase/firestore";
 import { auth, db } from "../../FireBaseDatabase/firebase";
+import {
+  ensureUserInitialized,
+  setLeaderboardEntry,
+  updateUserFields,
+} from "../../FireBaseDatabase/firestoreService";
 
 // ✅ Firestore Error Handler
 const handleFirestoreError = (error, showToast) => {
@@ -169,65 +174,21 @@ function ProfileEditModal({
     userName,
     userPhotoURL
   ) => {
-    if (!fb?.db) return;
-
+    // Use centralized service to initialize user + top-level leaderboard entry
     try {
-      // Progress subcollection
-      const progressRef = doc(fb.db, "users", userId, "progress", "data");
-      await setDoc(
-        progressRef,
-        {
-          lastPoint: 0,
-          createdAt: new Date(),
-        },
-        { merge: true }
-      );
+      await ensureUserInitialized(userId, {
+        email: auth.currentUser?.email || "",
+        name: userName,
+        photoURL: userPhotoURL,
+      });
 
-      // Scores subcollection
-      const scoresRef = doc(fb.db, "users", userId, "scores", "data");
-      await setDoc(
-        scoresRef,
-        {
-          totalScore: 0,
-          sessions: 0,
-          createdAt: new Date(),
-        },
-        { merge: true }
-      );
-
-      // Leaderboard entry (in user's subcollection)
-      const userLeaderboardRef = doc(
-        fb.db,
-        "users",
-        userId,
-        "leaderboard",
-        userId
-      );
-      await setDoc(
-        userLeaderboardRef,
-        {
-          userId: userId,
-          score: 0,
-          name: userName,
-          photoURL: userPhotoURL,
-          updatedAt: new Date(),
-        },
-        { merge: true }
-      );
-
-      // Global leaderboard entry
-      const globalLeaderboardRef = doc(fb.db, "leaderboard", userId);
-      await setDoc(
-        globalLeaderboardRef,
-        {
-          userId: userId,
-          score: 0,
-          name: userName,
-          photoURL: userPhotoURL,
-          updatedAt: new Date(),
-        },
-        { merge: true }
-      );
+      // Use the service to set the public leaderboard entry (keeps compatibility via service)
+      await setLeaderboardEntry(userId, {
+        name: userName,
+        photoURL: userPhotoURL,
+        totalScore: 0,
+        totalXP: 0,
+      });
 
       console.log("Initialized user subcollections for:", userId);
     } catch (error) {
@@ -253,27 +214,36 @@ function ProfileEditModal({
       // ✅ Always use selected avatar
       const finalPhotoURL = generateAvatarUrl(selectedAvatar);
 
-      // ✅ Save to main user document
-      const userDocRef = doc(fb.db, "users", userId);
-      await setDoc(
-        userDocRef,
-        {
+      // ✅ Save to main user document via centralized helper
+      try {
+        // Ensure canonical user document exists / is initialized
+        await ensureUserInitialized(userId, {
+          email: userData?.email || auth.currentUser?.email || "",
+          name: editedData.name.trim(),
+          photoURL: finalPhotoURL,
+        });
+
+        // Update the main user doc with the edited fields via centralized helper
+        await updateUserFields(userId, {
           name: editedData.name.trim(),
           photoURL: finalPhotoURL,
           email: userData?.email || auth.currentUser?.email,
           lastUpdated: new Date(),
           ...(userData?.createdAt && { createdAt: userData.createdAt }),
           lastLogin: new Date(),
-        },
-        { merge: true }
-      );
+        });
 
-      // ✅ Initialize subcollections
-      await initializeUserSubcollections(
-        userId,
-        editedData.name.trim(),
-        finalPhotoURL
-      );
+        // Ensure public leaderboard entry exists and is updated
+        await setLeaderboardEntry(userId, {
+          name: editedData.name.trim(),
+          photoURL: finalPhotoURL,
+          totalScore: userData?.totalScore || 0,
+          totalXP: userData?.totalXP || userData?.totalScore || 0,
+        });
+      } catch (err) {
+        console.error("Error saving profile via service:", err);
+        throw err;
+      }
 
       showToast("تم تحديث الملف الشخصي بنجاح!", "success");
       onClose();
@@ -578,17 +548,13 @@ export default function Dashboard() {
       const userDocRef = doc(fb.db, "users", userId);
       const photoURL = generateAvatarUrl("متعلم");
 
-      await setDoc(
-        userDocRef,
-        {
-          email: authUser?.email || "",
-          name: authUser?.displayName || "ضيف جديد",
-          photoURL: photoURL,
-          createdAt: new Date(),
-          lastLogin: new Date(),
-        },
-        { merge: true }
-      );
+      await updateUserFields(userId, {
+        email: authUser?.email || "",
+        name: authUser?.displayName || "ضيف جديد",
+        photoURL: photoURL,
+        createdAt: new Date(),
+        lastLogin: new Date(),
+      });
 
       console.log("Initialized user document for:", userId);
     } catch (error) {

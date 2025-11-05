@@ -13,9 +13,11 @@ import NotFoundPage from "./components/NotFound/NotFoundPage";
 // Games Imports
 import DragDrop from "./components/Games/DragDrop/DragDrop";
 import Memorygame from "./components/Games/MemoryGame/Memorygame";
+import HangmanGame from "./components/Games/HangmanGame/HangmanGame";
 import MessingLines from "./components/Games/MessingLines/MessingLines";
 import FPSGame from "./components/Games/RealisticArena/FPSGame";
 import AdventureTimeGame from "./components/Games/Adventure Time/src/App";
+// import Puzzle from "./components/Games/Puzzle/Puzzle";
 // Department Imports
 import MainComDep from "./components/Departments/ComputerDep/MainComDep";
 import PhysicDep from "./components/Departments/PhysicsDep/PhysicDep";
@@ -52,6 +54,8 @@ export default function App() {
             <Route path="/memorycard" element={<Memorygame />} />
             <Route path="/realisticarena" element={<FPSGame />} />
             <Route path="/adventuretime" element={<AdventureTimeGame />} />
+            {/* <Route path="/adventuretime" element={<Puzzle />} /> */}
+            <Route path="/hangmangame" element={<HangmanGame />} />
           </Routes>
         </Router>
       </AuthProvider>

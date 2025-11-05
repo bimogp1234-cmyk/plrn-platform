@@ -1,0 +1,128 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helpers
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isValidName(n) {
+      return n is string && n.size() <= 100;
+    }
+
+    function isValidPhotoURL(u) {
+      return u is string && u.size() <= 2000;
+    }
+
+    function isValidScore(n) {
+      return n is number && n >= 0 && n <= 1000000;
+    }
+
+    // Top-level public leaderboard (used by Leaderboard.jsx)
+    match /leaderboard/{entryId} {
+      // Public read to show global leaderboard in UI. Change to isSignedIn() if you want to restrict.
+      allow read: if true;
+
+      // Only the owner (authenticated) may create/update their entry; prevents clients from writing for other users.
+      allow create: if isSignedIn()
+        && request.auth.uid == request.resource.data.userId
+        && isValidName(request.resource.data.name)
+        && (request.resource.data.photoURL == null || isValidPhotoURL(request.resource.data.photoURL))
+        && (request.resource.data.totalScore == null || isValidScore(request.resource.data.totalScore));
+
+      allow update: if isSignedIn()
+        && resource.data.userId == request.auth.uid
+        // ensure userId cannot be changed
+        && request.resource.data.userId == resource.data.userId
+        && (request.resource.data.totalScore == null || isValidScore(request.resource.data.totalScore));
+
+      // Deletion limited to admin custom claim (set on server)
+      allow delete: if isSignedIn() && request.auth.token.admin == true;
+    }
+
+    // Users collection (each user's profile and subcollections)
+    match /users/{userId} {
+      // Reading user root doc: only the owner may read by default (more private).
+      // If you want public profiles (name/photo), change this to `if true` and
+      // keep sensitive fields in a `private` subcollection.
+      allow read: if isOwner(userId);
+
+      // Writing to the top-level users/{userId} document must be performed by the owner only.
+      allow create, update: if isOwner(userId)
+        && (request.resource.data.name == null || isValidName(request.resource.data.name))
+        && (request.resource.data.photoURL == null || isValidPhotoURL(request.resource.data.photoURL))
+        && (request.resource.data.totalScore == null || isValidScore(request.resource.data.totalScore))
+        && (request.resource.data.totalProgress == null || (request.resource.data.totalProgress is number && request.resource.data.totalProgress >= 0 && request.resource.data.totalProgress <= 100));
+
+      // Subcollection: scores -> users/{userId}/scores/{gameId}
+      match /scores/{gameId} {
+        // Reads are owner-only by default. Public leaderboards should use the
+        // top-level `leaderboard` collection rather than reading per-user scores.
+        allow read: if isOwner(userId);
+        allow create, update, delete: if isOwner(userId)
+          && (request.resource.data.gameId is string)
+          // unitId may be stored as number or string depending on client; accept both
+          && (request.resource.data.unitId is number || request.resource.data.unitId is string)
+          && (request.resource.data.score == null || isValidScore(request.resource.data.score))
+          && (request.resource.data.points == null || isValidScore(request.resource.data.points))
+          && (request.resource.data.completed == null || request.resource.data.completed is bool);
+      }
+
+      // Subcollection: lessons -> users/{userId}/lessons/{lessonId}
+      match /lessons/{lessonId} {
+        // Owner-only reads by default. Adjust to public read only if you
+        // intentionally publish lesson progress publicly.
+        allow read: if isOwner(userId);
+        allow create, update, delete: if isOwner(userId)
+          && (request.resource.data.lessonId is string)
+          && (request.resource.data.unitId is number || request.resource.data.unitId is string)
+          && (request.resource.data.completed == null || request.resource.data.completed is bool);
+      }
+
+      // Subcollection: progress -> users/{userId}/progress/{docId}
+      match /progress/{docId} {
+        allow read: if isOwner(userId);
+        allow create, update, delete: if isOwner(userId)
+          && (request.resource.data.totalProgress == null || (request.resource.data.totalProgress is number && request.resource.data.totalProgress >= 0 && request.resource.data.totalProgress <= 100));
+        // progressData is an array of complex objects; keep validation shallow to avoid blocking legitimate writes
+      }
+
+      // Subcollection: leaderboard inside user (optional per-user leaderboard entry)
+      match /leaderboard/{entryId} {
+        allow read: if true;
+        allow create: if isOwner(userId)
+          && request.auth.uid == request.resource.data.userId
+          && (request.resource.data.totalScore == null || isValidScore(request.resource.data.totalScore));
+        allow update: if isOwner(userId)
+          && resource.data.userId == request.auth.uid
+          && (request.resource.data.totalScore == null || isValidScore(request.resource.data.totalScore));
+        allow delete: if isSignedIn() && request.auth.token.admin == true;
+      }
+
+      // Subcollection: games -> users/{userId}/games/{gameId}
+      // Lightweight progress docs for resuming client-side games.
+      match /games/{gameId} {
+        // Owner may read their own saved progress
+        allow read: if isOwner(userId);
+
+        // Owner may create/update/delete a progress doc for themselves.
+        // Validate common fields so malicious clients can't write unexpected types.
+        allow create, update, delete: if isOwner(userId)
+          && (request.resource.data.currentLevel == null || request.resource.data.currentLevel is number)
+          && (request.resource.data.score == null || request.resource.data.score is number)
+          && (request.resource.data.completed == null || request.resource.data.completed is bool)
+          && (request.resource.data.progressPercentage == null || (request.resource.data.progressPercentage is number && request.resource.data.progressPercentage >= 0 && request.resource.data.progressPercentage <= 100));
+      }
+    }
+
+    // Fallback deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -12,9 +12,18 @@ import { HTML5Backend } from "react-dnd-html5-backend";
 import { useLocation, useNavigate } from "react-router-dom";
 import "@fontsource/tajawal";
 
-// Firestore imports
-import { doc, setDoc, serverTimestamp } from "firebase/firestore";
-import { db } from "./../../../FireBaseDatabase/firebase";
+// Firestore service
+import {
+  saveGameScore,
+  getGameProgress,
+  setGameProgress,
+} from "./../../../FireBaseDatabase/firestoreService";
+import {
+  DEFAULT_PER_PLACEMENT_POINTS,
+  computeRawMaxFromQuestions,
+} from "./../../../config/gameConstants";
+import { getStoredTheme, setTheme } from "./../../../utils/theme";
+import { useAuth } from "../../../contexts/AuthContext";
 
 // الأصوات
 const correctSound = new Audio("/sound/correct.mp3");
@@ -374,11 +383,17 @@ export default function DragDrop() {
   const { userData, darkMode, unitId, gameId, savedProgress } =
     location.state || {};
 
+  // Prefer the authenticated user from context to avoid passing incorrect uids
+  const { user: authUser } = useAuth ? useAuth() : { user: null };
+
   const [musicPlaying, setMusicPlaying] = useState(false);
-  const [currentLevel, setCurrentLevel] = useState(
-    savedProgress?.currentLevel || 0
-  );
-  const [score, setScore] = useState(savedProgress?.score || 0);
+  const [currentLevel, setCurrentLevel] = useState(0);
+  const [score, setScore] = useState(0);
+  const [savedProgressData, setSavedProgressData] = useState(null);
+  const [loadedFromSave, setLoadedFromSave] = useState(false);
+
+  // theme override: reads persisted choice and allows toggle
+  const [localTheme, setLocalTheme] = useState(null); // 'dark' | 'light' | null (null = follow prop)
   const [placed, setPlaced] = useState({});
   const [lives, setLives] = useState(3);
   const [showLivesModal, setShowLivesModal] = useState(false);
@@ -397,20 +412,36 @@ export default function DragDrop() {
       !Object.values(placed).some((p) => p && p.id === s.id)
   );
 
-  // 🎯 FIXED: Enhanced progress reporting
+  // 🎯 Enhanced progress reporting
   const reportProgress = async (isCompleted = false, finalScore = null) => {
     const currentScore = finalScore !== null ? finalScore : score;
+    // Use raw scoring based on per-level weights. Each question has a `points`
+    // weight; the game's rawMax is the sum of those weights. We compute the
+    // rawScore as the sum of earned per-level points (stored in `score`).
+    const rawScore = Math.max(0, Math.round(currentScore * 100) / 100);
+    // Prefer a centralized computation; fallback to question.points or a default
+    const rawMax =
+      computeRawMaxFromQuestions(QUESTIONS) ||
+      QUESTIONS.reduce(
+        (acc, q) =>
+          acc +
+          (q.points ||
+            DEFAULT_PER_PLACEMENT_POINTS * (q.requiredShapes?.length || 1)),
+        0
+      );
     const totalLevels = QUESTIONS.length;
     const progressPercentage = Math.floor((currentLevel / totalLevels) * 100);
 
     const gameData = {
-      score: currentScore,
+      score: rawScore,
+      rawScore,
+      rawMax,
       currentLevel: currentLevel,
       totalLevels: totalLevels,
       progressPercentage: progressPercentage,
       completed: isCompleted,
-      finalScore: isCompleted ? currentScore : undefined,
-      points: currentScore, // Use same as score for now
+      finalScore: isCompleted ? rawScore : undefined,
+      points: rawScore,
     };
 
     console.log("📊 Reporting progress:", gameData);
@@ -422,27 +453,38 @@ export default function DragDrop() {
       console.warn("localStorage save failed", err);
     }
 
-    // 2. Save to Firebase
-    if (userData?.uid && gameId) {
+    // 2. Save to Firebase via centralized service
+    const uid = authUser?.uid || userData?.uid;
+    if (!uid) {
+      // Do not attempt Firestore writes when there's no authenticated user.
+      // This prevents "Missing or insufficient permissions" errors when
+      // callers accidentally pass the wrong uid or the user is not signed in.
+      console.warn("Skipping remote save: no authenticated user");
+    }
+
+    if (uid && gameId) {
+      // Persist a lightweight progress doc so the game can resume later
       try {
-        const scoreDocRef = doc(db, "users", userData.uid, "scores", gameId);
-        await setDoc(
-          scoreDocRef,
-          {
-            gameId,
-            unitId,
-            score: currentScore,
-            points: currentScore,
-            completed: isCompleted,
-            currentLevel: currentLevel,
-            progressPercentage: progressPercentage,
-            lastPlayed: serverTimestamp(),
-          },
-          { merge: true }
-        );
-        console.log("✅ Firebase score saved");
+        await setGameProgress(uid, gameId, {
+          currentLevel: gameData.currentLevel,
+          score: gameData.score,
+          totalLevels: gameData.totalLevels,
+          progressPercentage: gameData.progressPercentage,
+          completed: Boolean(gameData.completed),
+        });
       } catch (err) {
-        console.error("❌ Firebase save error:", err);
+        console.warn("Could not save game progress to Firestore:", err);
+      }
+      try {
+        await saveGameScore(uid, gameId, {
+          unitId,
+          rawScore,
+          rawMax,
+          completed: Boolean(isCompleted),
+        });
+        console.log("✅ Firebase score saved (service)");
+      } catch (err) {
+        console.error("❌ Firebase save error (service):", err);
       }
     }
 
@@ -473,10 +515,97 @@ export default function DragDrop() {
 
   // Save progress when level or score changes
   useEffect(() => {
+    if (loadedFromSave === false && savedProgressData) {
+      // Do not auto-apply saved progress - wait for user to click Resume
+      return;
+    }
+
     if (currentLevel > 0 || score > 0) {
       reportProgress(false).catch(console.error);
     }
   }, [currentLevel, score]);
+
+  // Load saved progress (localStorage -> Firestore) on mount and AUTO-APPLY it
+  useEffect(() => {
+    let mounted = true;
+    const load = async () => {
+      try {
+        // 1. Try localStorage first
+        const raw = localStorage.getItem(`game_progress_${gameId}`);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (mounted && parsed) {
+            setSavedProgressData(parsed);
+            // Auto-apply saved progress immediately
+            setCurrentLevel(parsed.currentLevel || 0);
+            setScore(parsed.score || 0);
+            setLoadedFromSave(true);
+          }
+        }
+
+        // 2. If user is logged in try Firestore saved progress (overrides local)
+        if (userData?.uid && gameId) {
+          try {
+            const remote = await getGameProgress(userData.uid, gameId);
+            if (mounted && remote) {
+              setSavedProgressData(remote);
+              // Auto-apply remote progress (override local)
+              setCurrentLevel(remote.currentLevel || 0);
+              setScore(remote.score || 0);
+              setLoadedFromSave(true);
+            }
+          } catch (err) {
+            console.warn("Failed to load remote game progress:", err);
+          }
+        }
+
+        // Load persisted theme preference
+        const persisted = getStoredTheme();
+        if (mounted && persisted)
+          setLocalTheme(persisted === "dark" ? "dark" : "light");
+      } catch (err) {
+        console.warn("Failed to load saved progress:", err);
+      }
+    };
+    load();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  // Saved progress is applied automatically on load (auto-resume)
+
+  const handleResetProgress = async () => {
+    try {
+      localStorage.removeItem(`game_progress_${gameId}`);
+      if (userData?.uid) {
+        await setGameProgress(userData.uid, gameId, {
+          currentLevel: 0,
+          score: 0,
+          completed: false,
+        });
+      }
+      setSavedProgressData(null);
+      setCurrentLevel(0);
+      setScore(0);
+      setLoadedFromSave(false);
+      console.log("Progress reset");
+    } catch (err) {
+      console.warn("Failed to reset progress:", err);
+    }
+  };
+
+  // Theme toggle handler (persist locally and to user profile when available)
+  const toggleLocalTheme = async () => {
+    const next =
+      localTheme === "dark" || (!localTheme && darkMode) ? "light" : "dark";
+    setLocalTheme(next);
+    try {
+      await setTheme(next, userData?.uid || null);
+    } catch (err) {
+      console.warn("Failed to persist theme", err);
+    }
+  };
 
   const toggleMusic = () => {
     if (musicPlaying) {
@@ -501,7 +630,15 @@ export default function DragDrop() {
       correctSound.currentTime = 0;
       correctSound.play().catch(console.error);
       setPlaced((prev) => ({ ...prev, [slotId]: draggedShape }));
-      setScore((s) => s + 50); // Points per correct placement
+      // Award per-placement points proportionally so each level's max equals
+      // its `points` weight. This keeps the game's overall rawMax equal to
+      // sum(QUESTIONS[].points).
+      const placementsCount = slots.length || 1;
+      const perPlacement = (currentQuestion.points || 0) / placementsCount;
+      setScore((s) => {
+        const next = +(s + perPlacement).toFixed(2);
+        return next;
+      });
     } else {
       // Wrong placement
       wrongSound.currentTime = 0;
@@ -536,9 +673,8 @@ export default function DragDrop() {
             setLives(3);
           }
         } else {
-          // Game completed - calculate final score with bonus
-          const levelBonus = currentQuestion.points;
-          const finalScore = score + levelBonus;
+          // Game completed - final score is the accumulated per-level points
+          const finalScore = score;
           setGameCompleted(true);
           setShowGameOverModal(true);
 
@@ -586,8 +722,7 @@ export default function DragDrop() {
   };
 
   const exitWithCompletion = () => {
-    const levelBonus = currentQuestion.points;
-    const finalScore = score + levelBonus;
+    const finalScore = score;
 
     reportProgress(true, finalScore)
       .then(() => {
@@ -623,27 +758,39 @@ export default function DragDrop() {
           className={`${darkMode ? "bg-gray-800" : "bg-white"} shadow-md`}
         >
           <Toolbar className="flex justify-between items-center">
-            <Button
-              onClick={exitGame}
-              variant="outlined"
-              size="small"
-              className="text-green-500 border-green-500"
-            >
-              العودة
-            </Button>
-            <span className="text-lg font-bold text-green-500">
-              لعبة أشكال الخوارزميات
-            </span>
             <div className="flex items-center gap-2">
-              <IconButton onClick={() => {}} color="inherit">
-                <Brightness4 className="text-blue-400" />
-              </IconButton>
+              <Button
+                onClick={exitGame}
+                variant="outlined"
+                size="small"
+                className="text-green-500 border-green-500"
+              >
+                العودة
+              </Button>
+              <span className="text-lg font-bold text-green-500 ml-3">
+                لعبة أشكال الخوارزميات
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {/* Theme toggle: persists choice locally and to the user profile when logged in */}
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={toggleLocalTheme}
+              >
+                {localTheme === "dark" || (localTheme === null && darkMode)
+                  ? "وضع فاتح"
+                  : "وضع داكن"}
+              </Button>
               <IconButton onClick={toggleMusic} color="inherit">
                 {musicPlaying ? <VolumeUp /> : <VolumeOff />}
               </IconButton>
             </div>
           </Toolbar>
         </AppBar>
+
+        {/* Saved progress (auto-applied) — UI no longer requires manual Resume */}
 
         <main className="flex-1 grid grid-cols-2 gap-4 p-6">
           <div className="relative h-full overflow-hidden border-r border-gray-700/30 pr-4">
@@ -770,11 +917,8 @@ export default function DragDrop() {
                 {gameCompleted && (
                   <>
                     <br />
-                    مكافأة المستوى: <strong>+{currentQuestion.points}</strong>
-                    <br />
                     <span className="text-green-600">
-                      النقاط الإجمالية:{" "}
-                      <strong>{score + currentQuestion.points}</strong>
+                      النقاط الإجمالية: <strong>{score}</strong>
                     </span>
                   </>
                 )}

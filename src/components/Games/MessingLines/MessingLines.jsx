@@ -5,9 +5,8 @@ import { AppBar, Toolbar, IconButton, Button } from "@mui/material";
 import { Brightness4, VolumeUp, VolumeOff } from "@mui/icons-material";
 import { useLocation, useNavigate } from "react-router-dom";
 
-// Firestore imports
-import { doc, setDoc, serverTimestamp } from "firebase/firestore";
-import { db } from "./../../../FireBaseDatabase/firebase";
+// Firestore service
+import { saveGameScore } from "./../../../FireBaseDatabase/firestoreService";
 
 // الأصوات
 const correctSound = new Audio("/sound/correct.mp3");
@@ -350,17 +349,22 @@ export default function MissingLinesGame() {
   // 🎯 Enhanced progress reporting
   const reportProgress = async (isCompleted = false, finalScore = null) => {
     const currentScore = finalScore !== null ? finalScore : score;
+    // Use raw scoring here (sum of question points). Let the service normalize.
+    const rawScore = Math.max(0, Math.round(currentScore));
+    const rawMax = QUESTIONS.reduce((s, q) => s + (q.points || 0), 0);
     const totalQuestions = QUESTIONS.length;
     const progressPercentage = Math.floor((index / totalQuestions) * 100);
 
     const gameData = {
-      score: currentScore,
+      score: rawScore,
+      rawScore,
+      rawMax,
       currentLevel: index,
       totalLevels: totalQuestions,
       progressPercentage: progressPercentage,
       completed: isCompleted,
-      finalScore: isCompleted ? currentScore : undefined,
-      points: currentScore,
+      finalScore: isCompleted ? rawScore : undefined,
+      points: rawScore,
     };
 
     console.log("📊 Reporting progress:", gameData);
@@ -372,27 +376,18 @@ export default function MissingLinesGame() {
       console.warn("localStorage save failed", err);
     }
 
-    // 2. Save to Firebase
+    // 2. Save to Firebase via centralized service
     if (userData?.uid && gameId) {
       try {
-        const scoreDocRef = doc(db, "users", userData.uid, "scores", gameId);
-        await setDoc(
-          scoreDocRef,
-          {
-            gameId,
-            unitId,
-            score: currentScore,
-            points: currentScore,
-            completed: isCompleted,
-            currentLevel: index,
-            progressPercentage: progressPercentage,
-            lastPlayed: serverTimestamp(),
-          },
-          { merge: true }
-        );
-        console.log("✅ Firebase score saved");
+        await saveGameScore(userData.uid, gameId, {
+          unitId,
+          rawScore,
+          rawMax,
+          completed: Boolean(isCompleted),
+        });
+        console.log("✅ Firebase score saved (service)");
       } catch (err) {
-        console.error("❌ Firebase save error:", err);
+        console.error("❌ Firebase save error (service):", err);
       }
     }
 

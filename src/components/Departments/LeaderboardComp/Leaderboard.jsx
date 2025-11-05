@@ -21,16 +21,11 @@ import {
   Refresh,
 } from "@mui/icons-material";
 import {
-  collection,
-  getDocs,
-  orderBy,
-  query,
-  limit,
-  onSnapshot,
-  doc,
-  getDoc,
-} from "firebase/firestore";
-import { db } from "./../../../FireBaseDatabase/firebase";
+  getLeaderboard,
+  onLeaderboardChange,
+  getAllLeaderboard,
+  getLeaderboardEntry,
+} from "./../../../FireBaseDatabase/firestoreService";
 
 const Leaderboard = ({ darkMode, userId, userScore, isMobile }) => {
   const [leaderboardData, setLeaderboardData] = useState([]);
@@ -38,19 +33,21 @@ const Leaderboard = ({ darkMode, userId, userScore, isMobile }) => {
   const [error, setError] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [currentUserData, setCurrentUserData] = useState(null);
+  const [rawDocs, setRawDocs] = useState([]);
+  // Auto-enable raw docs view when debugging via URL ?debug=1 or localStorage flag
+  const debugFlag =
+    (typeof window !== "undefined" &&
+      (new URLSearchParams(window.location.search).get("debug") === "1" ||
+        localStorage.getItem("debugLeaderboard") === "1")) ||
+    false;
+  const [showRaw, setShowRaw] = useState(debugFlag);
 
-  // 🎯 Fetch current user's leaderboard data
+  // 🎯 Fetch current user's leaderboard data (direct lookup)
   const fetchCurrentUserData = async () => {
     if (!userId) return null;
-
     try {
-      const userRef = doc(db, "leaderboard", userId);
-      const userSnap = await getDoc(userRef);
-
-      if (userSnap.exists()) {
-        return userSnap.data();
-      }
-      return null;
+      const entry = await getLeaderboardEntry(userId);
+      return entry ? entry.data : null;
     } catch (error) {
       console.error("Error fetching current user data:", error);
       return null;
@@ -68,27 +65,23 @@ const Leaderboard = ({ darkMode, userId, userScore, isMobile }) => {
       const currentUser = await fetchCurrentUserData();
       setCurrentUserData(currentUser);
 
-      const leaderboardRef = collection(db, "leaderboard");
-      const leaderboardQuery = query(
-        leaderboardRef,
-        orderBy("totalScore", "desc"),
-        limit(10)
-      );
-
-      const querySnapshot = await getDocs(leaderboardQuery);
+      // Load top 20 leaderboard documents
+      const docs = await getLeaderboard({ limit: 20 });
       const leaders = [];
+      const raw = [];
 
-      querySnapshot.forEach((doc) => {
-        const data = doc.data();
+      docs.forEach((d) => {
+        const data = d.data || d.data;
+        raw.push({ id: d.id, data });
 
-        // Only add users with valid data
-        if (data.userId && data.name && data.name !== "مستخدم جديد") {
+        if (data && data.userId && data.name && data.name !== "مستخدم جديد") {
           leaders.push({
-            id: doc.id,
+            id: d.id,
             userId: data.userId,
             name: data.name,
             photoURL: data.photoURL || "",
-            totalScore: data.totalScore || 0,
+            // prefer totalXP (new model), fallback to totalScore for compatibility
+            totalXP: data.totalXP ?? data.totalScore ?? 0,
             completedGames: data.completedGames || 0,
             completedUnits: data.completedUnits || 0,
             lastUpdated: data.lastUpdated,
@@ -97,6 +90,7 @@ const Leaderboard = ({ darkMode, userId, userScore, isMobile }) => {
         }
       });
 
+      setRawDocs(raw);
       console.log("🏆 Leaderboard data loaded:", leaders.length, "players");
       console.log("👤 Current user data:", currentUser);
 
@@ -110,63 +104,108 @@ const Leaderboard = ({ darkMode, userId, userScore, isMobile }) => {
     }
   };
 
+  // 🎯 (Debug) Fetch all leaderboard docs (paginated) and display everyone
+  const fetchAllLeaderboard = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      console.log("📊 Fetching ALL leaderboard pages (debug-only)...");
+
+      const docs = await getAllLeaderboard({ pageSize: 200 });
+      const leaders = [];
+      const raw = [];
+
+      docs.forEach((d) => {
+        const data = d.data || d.data;
+        raw.push({ id: d.id, data });
+
+        if (data && data.userId && data.name && data.name !== "مستخدم جديد") {
+          leaders.push({
+            id: d.id,
+            userId: data.userId,
+            name: data.name,
+            photoURL: data.photoURL || "",
+            totalXP: data.totalXP ?? data.totalScore ?? 0,
+            completedGames: data.completedGames || 0,
+            completedUnits: data.completedUnits || 0,
+            lastUpdated: data.lastUpdated,
+            rank: leaders.length + 1,
+          });
+        }
+      });
+
+      setRawDocs(raw);
+      setLeaderboardData(leaders);
+      setLastUpdated(new Date());
+    } catch (err) {
+      console.error("❌ Error fetching ALL leaderboard:", err);
+      setError("فشل في تحميل لوحة المتصدرين (كل المستخدمين)");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // 🎯 Real-time leaderboard updates
   useEffect(() => {
-    console.log("👂 Setting up real-time leaderboard listener...");
-
-    const leaderboardRef = collection(db, "leaderboard");
-    const leaderboardQuery = query(
-      leaderboardRef,
-      orderBy("totalScore", "desc"),
-      limit(10)
+    console.log(
+      "👂 Setting up real-time leaderboard listener (service) for top 20..."
     );
 
-    const unsubscribe = onSnapshot(
-      leaderboardQuery,
-      async (snapshot) => {
-        const leaders = [];
+    const unsubscribe = onLeaderboardChange(
+      async (docs) => {
+        try {
+          const leaders = [];
+          const raw = [];
 
-        // Fetch current user data for real-time updates
-        const currentUser = await fetchCurrentUserData();
-        setCurrentUserData(currentUser);
+          // Fetch current user data for real-time updates
+          const currentUser = await fetchCurrentUserData();
+          setCurrentUserData(currentUser);
 
-        snapshot.forEach((doc) => {
-          const data = doc.data();
+          docs.forEach((d) => {
+            const data = d.data;
+            raw.push({ id: d.id, data });
 
-          // Only add users with valid data
-          if (data.userId && data.name && data.name !== "مستخدم جديد") {
-            leaders.push({
-              id: doc.id,
-              userId: data.userId,
-              name: data.name,
-              photoURL: data.photoURL || "",
-              totalScore: data.totalScore || 0,
-              completedGames: data.completedGames || 0,
-              completedUnits: data.completedUnits || 0,
-              lastUpdated: data.lastUpdated,
-              rank: leaders.length + 1,
-            });
-          }
-        });
+            if (
+              data &&
+              data.userId &&
+              data.name &&
+              data.name !== "مستخدم جديد"
+            ) {
+              leaders.push({
+                id: d.id,
+                userId: data.userId,
+                name: data.name,
+                photoURL: data.photoURL || "",
+                totalXP: data.totalXP ?? data.totalScore ?? 0,
+                completedGames: data.completedGames || 0,
+                completedUnits: data.completedUnits || 0,
+                lastUpdated: data.lastUpdated,
+                rank: leaders.length + 1,
+              });
+            }
+          });
 
-        console.log("🔄 Real-time update - Players:", leaders.length);
-        setLeaderboardData(leaders);
-        setLastUpdated(new Date());
+          setRawDocs(raw);
+          console.log("🔄 Real-time update - Players:", leaders.length);
+          setLeaderboardData(leaders);
+          setLastUpdated(new Date());
+        } catch (err) {
+          console.error("❌ Error processing realtime leaderboard docs:", err);
+          setError("خطأ في التحديث اللحظي للتصنيف");
+        }
       },
-      (err) => {
-        console.error("❌ Leaderboard snapshot error:", err);
-        setError("خطأ في التحديث اللحظي للتصنيف");
-      }
+      { limit: 20 }
     );
 
     return () => {
-      console.log("🧹 Cleaning up leaderboard listener");
-      unsubscribe();
+      console.log("🧹 Cleaning up leaderboard listener (service)");
+      unsubscribe && unsubscribe();
     };
   }, [userId]);
 
   // 🎯 Initial load
   useEffect(() => {
+    // Load top 20 on mount using fetchLeaderboard (real-time listener will keep it updated)
     fetchLeaderboard();
   }, [userId]);
 
@@ -177,7 +216,7 @@ const Leaderboard = ({ darkMode, userId, userScore, isMobile }) => {
       return {
         name: currentUserData.name || "مستخدم",
         photoURL: currentUserData.photoURL || "",
-        totalScore: currentUserData.totalScore || 0,
+        totalXP: currentUserData.totalXP ?? currentUserData.totalScore ?? 0,
         completedGames: currentUserData.completedGames || 0,
         completedUnits: currentUserData.completedUnits || 0,
       };
@@ -187,7 +226,7 @@ const Leaderboard = ({ darkMode, userId, userScore, isMobile }) => {
     return {
       name: player.name,
       photoURL: player.photoURL,
-      totalScore: player.totalScore,
+      totalXP: player.totalXP ?? player.totalScore ?? 0,
       completedGames: player.completedGames,
       completedUnits: player.completedUnits,
     };
@@ -319,14 +358,7 @@ const Leaderboard = ({ darkMode, userId, userScore, isMobile }) => {
           لوحة المتصدرين
         </Typography>
 
-        <Button
-          variant="outlined"
-          size="small"
-          onClick={fetchLeaderboard}
-          className="text-xs"
-        >
-          تحديث
-        </Button>
+        {/* Manual update buttons removed - leaderboard listens in real-time */}
       </div>
       {leaderboardData.length === 0 ? (
         <Box className="text-center py-6">
@@ -456,7 +488,7 @@ const Leaderboard = ({ darkMode, userId, userScore, isMobile }) => {
                           darkMode ? "text-yellow-400" : "text-yellow-600"
                         } ${isMobile ? "text-xs" : "text-sm"}`}
                       >
-                        {userData.totalScore?.toLocaleString() || 0}
+                        {userData.totalXP?.toLocaleString() || 0}
                       </TableCell>
                     </TableRow>
                   );
@@ -502,6 +534,33 @@ const Leaderboard = ({ darkMode, userId, userScore, isMobile }) => {
         <Typography variant="caption" className="text-gray-500">
           إجمالي اللاعبين: {leaderboardData.length} | نقاطك: {userScore}
         </Typography>
+        <div className="mt-2">
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={() => setShowRaw((s) => !s)}
+          >
+            {showRaw ? "إخفاء raw docs" : `عرض raw docs (${rawDocs.length})`}
+          </Button>
+        </div>
+        {showRaw && (
+          <Box className="mt-2 p-2 text-left max-h-48 overflow-auto bg-gray-50 rounded">
+            {rawDocs.length === 0 ? (
+              <Typography variant="caption">لا توجد مستندات خام.</Typography>
+            ) : (
+              rawDocs.map((d) => (
+                <div key={d.id} className="mb-2">
+                  <Typography variant="caption" className="font-semibold">
+                    ID: {d.id}
+                  </Typography>
+                  <pre className="text-xs bg-white p-2 rounded border mt-1">
+                    {JSON.stringify(d.data, null, 2)}
+                  </pre>
+                </div>
+              ))
+            )}
+          </Box>
+        )}
       </Box>
     </Box>
   );

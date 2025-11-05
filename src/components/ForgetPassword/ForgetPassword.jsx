@@ -3,7 +3,8 @@ import logo from "../../assets/logo/logo.png";
 import { Link } from "react-router-dom";
 import { auth, db } from "../../FireBaseDatabase/firebase";
 import { sendPasswordResetEmail } from "firebase/auth";
-import { doc, setDoc, getDoc } from "firebase/firestore";
+import /*doc, setDoc, getDoc*/ "firebase/firestore";
+import { updateUserFields } from "../../FireBaseDatabase/firestoreService";
 import ToastManager from "../Toast/ToastManager";
 
 const ForgetPassword = () => {
@@ -28,15 +29,15 @@ const ForgetPassword = () => {
       // إرسال رابط استعادة كلمة المرور
       await sendPasswordResetEmail(auth, email);
 
-      // Firestore: تسجيل وقت طلب إعادة التعيين (اختياري)
-      const userRef = doc(db, "users", auth.currentUser?.uid || email);
-      const userSnap = await getDoc(userRef);
-      if (userSnap.exists()) {
-        await setDoc(
-          userRef,
-          { lastPasswordReset: Date.now() },
-          { merge: true }
-        );
+      // Firestore: تسجيل وقت طلب إعادة التعيين (اختياري) — only if user is signed in
+      if (auth.currentUser?.uid) {
+        try {
+          await updateUserFields(auth.currentUser.uid, {
+            lastPasswordReset: Date.now(),
+          });
+        } catch (err) {
+          console.warn("Could not write lastPasswordReset:", err);
+        }
       }
 
       showToast(
