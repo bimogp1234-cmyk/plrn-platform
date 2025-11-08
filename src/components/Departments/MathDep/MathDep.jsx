@@ -19,7 +19,13 @@ export default function MathDep() {
   const { userData, darkMode } = location.state || {};
   const name = userData?.fullName || "مستخدم غير معروف";
   const photo =
-    userData?.photoURL || "https://placehold.co/100x100/10b981/ffffff?text=U";
+    userData?.avatarURL ||
+    (userData?.avatarSeed
+      ? `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(
+          userData.avatarSeed
+        )}&size=100`
+      : userData?.photoURL) ||
+    "https://placehold.co/100x100/10b981/ffffff?text=U";
 
   const [showContent, setShowContent] = useState(false);
 

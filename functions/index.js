@@ -15,6 +15,57 @@ async function safeGetDoc(path) {
   }
 }
 
+// Helper: write newData to docPath only if relevant fields changed.
+// Returns true if a write occurred.
+async function writeIfChanged(docPath, newData, keysToCompare = []) {
+  const ref = db.doc(docPath);
+  try {
+    const snap = await ref.get();
+    if (!snap.exists) {
+      // New doc — write with server timestamp metadata
+      await ref.set(
+        {
+          ...newData,
+          lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+      return true;
+    }
+
+    const old = snap.data() || {};
+
+    // If no specific keys provided, do a shallow compare of top-level keys in newData
+    if (!keysToCompare || keysToCompare.length === 0) {
+      keysToCompare = Object.keys(newData);
+    }
+
+    let changed = false;
+    for (const k of keysToCompare) {
+      const a = old[k] === undefined ? null : old[k];
+      const b = newData[k] === undefined ? null : newData[k];
+      if (a !== b) {
+        changed = true;
+        break;
+      }
+    }
+
+    if (!changed) {
+      return false;
+    }
+
+    await ref.set(
+      { ...newData, lastUpdated: admin.firestore.FieldValue.serverTimestamp() },
+      { merge: true }
+    );
+    return true;
+  } catch (err) {
+    console.error("writeIfChanged error", docPath, err.message || err);
+    // On error, avoid swallowing — caller may decide how to handle.
+    throw err;
+  }
+}
+
 /**
  * Sync leaderboard doc when user's overall scores change.
  * Trigger: users/{uid}/scores/overall onCreate/onUpdate/onDelete
@@ -65,14 +116,25 @@ exports.syncLeaderboardFromOverall = functions.firestore
       completedLessons:
         overall.completedLessons || profile.completedLessons || 0,
       completedUnits: overall.completedUnits || profile.completedUnits || 0,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
+      // lastActive/lastUpdated are set server-side when we write
       lastActive: admin.firestore.FieldValue.serverTimestamp(),
     };
 
     try {
-      await db.doc(`leaderboard/${uid}`).set(payload, { merge: true });
-      console.log(`Synced leaderboard/${uid}`, { totalXP, totalScore });
+      const wrote = await writeIfChanged(`leaderboard/${uid}`, payload, [
+        "name",
+        "photoURL",
+        "totalXP",
+        "totalScore",
+        "completedGames",
+        "completedLessons",
+        "completedUnits",
+      ]);
+      if (wrote) {
+        console.log(`Synced leaderboard/${uid}`, { totalXP, totalScore });
+      } else {
+        console.log(`No leaderboard update required for ${uid}`);
+      }
     } catch (err) {
       console.error("Error writing leaderboard doc", err.message || err);
     }

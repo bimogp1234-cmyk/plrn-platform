@@ -14,7 +14,7 @@ import logo from "../../assets/logo/logo.png";
 import {
   ensureUserInitialized,
   updateUserFields,
-} from "../../FireBaseDatabase/firestoreService";
+} from "../Departments/ComputerDep/progressService";
 
 const RegisterForm = () => {
   const [formState, setFormState] = useState({
@@ -94,7 +94,7 @@ const RegisterForm = () => {
         3000
       );
     } catch (err) {
-      console.error(err);
+      console.error("Registration error:", err);
       let message = "❌ حدث خطأ أثناء إنشاء الحساب.";
       switch (err.code) {
         case "auth/email-already-in-use":
@@ -109,6 +109,13 @@ const RegisterForm = () => {
         case "auth/operation-not-allowed":
           message = "❌ إنشاء الحساب باستخدام البريد الإلكتروني غير مفعل.";
           break;
+        case "permission-denied":
+          message = "❌ ليس لديك صلاحية للقيام بهذه العملية.";
+          break;
+        default:
+          if (err.message?.includes("permission")) {
+            message = "❌ خطأ في الصلاحيات. يرجى المحاولة مرة أخرى.";
+          }
       }
       showError(message);
     } finally {
@@ -148,8 +155,12 @@ const RegisterForm = () => {
         setTimeout(() => navigate("/login"), 2000);
       }
     } catch (err) {
-      console.error(err);
-      showError("❌ فشل تسجيل الدخول باستخدام Google.");
+      console.error("Google auth error:", err);
+      let message = "❌ فشل تسجيل الدخول باستخدام Google.";
+      if (err.code === "permission-denied") {
+        message = "❌ ليس لديك صلاحية للوصول إلى البيانات.";
+      }
+      showError(message);
     } finally {
       setLoading(false);
     }
@@ -170,8 +181,12 @@ const RegisterForm = () => {
       setGoogleSetPasswordMode(false);
       setTimeout(() => navigate("/login"), 2000);
     } catch (err) {
-      console.error(err);
-      showError("❌ فشل إضافة كلمة المرور. حاول مرة أخرى.");
+      console.error("Set password error:", err);
+      let message = "❌ فشل إضافة كلمة المرور. حاول مرة أخرى.";
+      if (err.code === "permission-denied") {
+        message = "❌ ليس لديك صلاحية لتحديث البيانات.";
+      }
+      showError(message);
     } finally {
       setLoading(false);
     }

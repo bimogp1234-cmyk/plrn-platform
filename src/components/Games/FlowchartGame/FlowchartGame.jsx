@@ -4,7 +4,7 @@ import { useLocation } from "react-router-dom";
 import {
   saveGameScore,
   getUserScores,
-} from "../../../FireBaseDatabase/firestoreService";
+} from "../../Departments/ComputerDep/progressService";
 
 // Lottie animations
 import startAnim from "./lottie/start.json";

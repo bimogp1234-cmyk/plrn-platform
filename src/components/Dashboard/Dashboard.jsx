@@ -55,7 +55,7 @@ import {
   ensureUserInitialized,
   setLeaderboardEntry,
   updateUserFields,
-} from "../../FireBaseDatabase/firestoreService";
+} from "../Departments/ComputerDep/progressService";
 
 // ✅ Firestore Error Handler
 const handleFirestoreError = (error, showToast) => {
@@ -224,13 +224,18 @@ function ProfileEditModal({
         });
 
         // Update the main user doc with the edited fields via centralized helper
+        // Store both the chosen avatar seed and the generated avatar URL so
+        // other components (games, leaderboard) can prefer the chosen avatar.
         await updateUserFields(userId, {
           name: editedData.name.trim(),
           photoURL: finalPhotoURL,
+          avatarSeed: selectedAvatar,
+          avatarURL: finalPhotoURL,
           email: userData?.email || auth.currentUser?.email,
-          lastUpdated: new Date(),
+          // use numeric timestamps to comply with Firestore rules
+          lastUpdated: Date.now(),
           ...(userData?.createdAt && { createdAt: userData.createdAt }),
-          lastLogin: new Date(),
+          lastLogin: Date.now(),
         });
 
         // Ensure public leaderboard entry exists and is updated
@@ -537,7 +542,9 @@ export default function Dashboard() {
 
   // ✅ Get user photo URL
   const getUserPhotoURL = (userData) => {
-    return userData?.photoURL || generateAvatarUrl("متعلم");
+    return (
+      userData?.avatarURL || userData?.photoURL || generateAvatarUrl("متعلم")
+    );
   };
 
   // ✅ Initialize user document
@@ -552,8 +559,9 @@ export default function Dashboard() {
         email: authUser?.email || "",
         name: authUser?.displayName || "ضيف جديد",
         photoURL: photoURL,
-        createdAt: new Date(),
-        lastLogin: new Date(),
+        // store numeric timestamps (ms since epoch) to satisfy strict rules
+        createdAt: Date.now(),
+        lastLogin: Date.now(),
       });
 
       console.log("Initialized user document for:", userId);

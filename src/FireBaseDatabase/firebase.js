@@ -13,7 +13,7 @@ const firebaseConfig = {
   measurementId: "G-QKZR8QKC1W",
 };
 
-// Initialize Firebase
+// Initialize Firebase using the env-aware config
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);

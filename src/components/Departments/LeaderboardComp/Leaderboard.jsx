@@ -1,4 +1,4 @@
-// LeaderBoard.jsx - FIXED VERSION
+// LeaderBoard.jsx - FIXED FIREBASE PERMISSIONS
 import React, { useState, useEffect } from "react";
 import {
   Table,
@@ -13,19 +13,22 @@ import {
   Box,
   CircularProgress,
   Button,
+  Alert,
 } from "@mui/material";
 import {
   EmojiEvents,
   MilitaryTech,
   Person,
   Refresh,
+  Warning,
 } from "@mui/icons-material";
 import {
   getLeaderboard,
   onLeaderboardChange,
   getAllLeaderboard,
   getLeaderboardEntry,
-} from "./../../../FireBaseDatabase/firestoreService";
+  getUserProfile,
+} from "../ComputerDep/progressService";
 
 const Leaderboard = ({ darkMode, userId, userScore, isMobile }) => {
   const [leaderboardData, setLeaderboardData] = useState([]);
@@ -34,6 +37,8 @@ const Leaderboard = ({ darkMode, userId, userScore, isMobile }) => {
   const [lastUpdated, setLastUpdated] = useState(null);
   const [currentUserData, setCurrentUserData] = useState(null);
   const [rawDocs, setRawDocs] = useState([]);
+  const [permissionError, setPermissionError] = useState(null);
+
   // Auto-enable raw docs view when debugging via URL ?debug=1 or localStorage flag
   const debugFlag =
     (typeof window !== "undefined" &&
@@ -42,23 +47,39 @@ const Leaderboard = ({ darkMode, userId, userScore, isMobile }) => {
     false;
   const [showRaw, setShowRaw] = useState(debugFlag);
 
-  // 🎯 Fetch current user's leaderboard data (direct lookup)
+  // Helper: extract plain data from different return shapes
+  // - QueryDocumentSnapshot -> call .data()
+  // - legacy { id, data } -> use .data
+  // - normalized { id, ...fields } -> remove id and return fields
+  const extractDocData = (docLike) => {
+    if (!docLike) return null;
+    if (typeof docLike.data === "function") return docLike.data();
+    if (docLike.data !== undefined) return docLike.data;
+    const { id, ...rest } = docLike;
+    return Object.keys(rest).length ? rest : null;
+  };
+
+  // 🎯 Fetch current user's leaderboard data (direct lookup) with error handling
   const fetchCurrentUserData = async () => {
     if (!userId) return null;
     try {
       const entry = await getLeaderboardEntry(userId);
-      return entry ? entry.data : null;
+      return extractDocData(entry);
     } catch (error) {
       console.error("Error fetching current user data:", error);
+      if (error.code === "permission-denied") {
+        setPermissionError("ليس لديك صلاحية للوصول إلى بيانات التصنيف.");
+      }
       return null;
     }
   };
 
-  // 🎯 Fetch leaderboard data from Firebase only
+  // 🎯 Fetch leaderboard data from Firebase only with enhanced error handling
   const fetchLeaderboard = async () => {
     try {
       setLoading(true);
       setError(null);
+      setPermissionError(null);
       console.log("📊 Fetching leaderboard data from Firebase...");
 
       // Fetch current user data first
@@ -70,17 +91,55 @@ const Leaderboard = ({ darkMode, userId, userScore, isMobile }) => {
       const leaders = [];
       const raw = [];
 
-      docs.forEach((d) => {
-        const data = d.data || d.data;
+      for (const d of docs) {
+        const data = extractDocData(d);
         raw.push({ id: d.id, data });
 
-        if (data && data.userId && data.name && data.name !== "مستخدم جديد") {
+        // Enhanced error handling for profile enrichment
+        let name = data?.name;
+        let photo = data?.avatarURL || data?.photoURL || null;
+
+        try {
+          if (!name || name === "مستخدم" || name === "مستخدم جديد" || !photo) {
+            const profile = await getUserProfile(data.userId);
+            if (profile) {
+              if (
+                !name &&
+                (profile.name || profile.fullName || profile.displayName)
+              ) {
+                name = profile.name || profile.fullName || profile.displayName;
+              }
+              if (!photo) {
+                photo =
+                  profile.avatarURL ||
+                  profile.photoURL ||
+                  (profile.avatarSeed
+                    ? `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(
+                        profile.avatarSeed
+                      )}&size=100`
+                    : null);
+              }
+            }
+          }
+        } catch (err) {
+          console.warn(
+            "Could not enrich leaderboard profile for",
+            data?.userId,
+            err
+          );
+          // Don't set permission error for profile enrichment failures - they're non-critical
+        }
+
+        // Some writers may omit userId in the document; fall back to the doc id
+        const uid = data?.userId || d.id;
+        if (data && uid) {
           leaders.push({
             id: d.id,
-            userId: data.userId,
-            name: data.name,
-            photoURL: data.photoURL || "",
-            // prefer totalXP (new model), fallback to totalScore for compatibility
+            userId: uid,
+            name: name || data.userName || data.fullName || "مستخدم",
+            avatarSeed: data?.avatarSeed || null,
+            avatarURL: data?.avatarURL || null,
+            photoURL: photo || "",
             totalXP: data.totalXP ?? data.totalScore ?? 0,
             completedGames: data.completedGames || 0,
             completedUnits: data.completedUnits || 0,
@@ -88,17 +147,45 @@ const Leaderboard = ({ darkMode, userId, userScore, isMobile }) => {
             rank: leaders.length + 1,
           });
         }
-      });
+      }
 
       setRawDocs(raw);
       console.log("🏆 Leaderboard data loaded:", leaders.length, "players");
       console.log("👤 Current user data:", currentUser);
 
+      // If no public leaderboard entries were returned but we have a current
+      // user entry, show the current user so they at least see their score.
+      if (leaders.length === 0 && currentUser) {
+        leaders.push({
+          id: currentUser.userId || currentUser.uid || userId || "me",
+          userId: currentUser.userId || currentUser.uid || userId || "me",
+          name:
+            currentUser.name ||
+            currentUser.userName ||
+            currentUser.fullName ||
+            "مستخدم",
+          avatarSeed: currentUser.avatarSeed || null,
+          avatarURL: currentUser.avatarURL || null,
+          photoURL: currentUser.avatarURL || currentUser.photoURL || "",
+          totalXP:
+            currentUser.totalXP ?? currentUser.totalScore ?? userScore ?? 0,
+          completedGames: currentUser.completedGames || 0,
+          completedUnits: currentUser.completedUnits || 0,
+          lastUpdated: currentUser.lastUpdated || null,
+          rank: 1,
+        });
+      }
+
       setLeaderboardData(leaders);
       setLastUpdated(new Date());
     } catch (err) {
       console.error("❌ Error fetching leaderboard:", err);
-      setError("فشل في تحميل لوحة المتصدرين");
+      if (err.code === "permission-denied") {
+        setPermissionError("ليس لديك صلاحية لعرض لوحة المتصدرين.");
+        setError("لا يمكن تحميل التصنيف بسبب قيود الصلاحيات.");
+      } else {
+        setError("فشل في تحميل لوحة المتصدرين");
+      }
     } finally {
       setLoading(false);
     }
@@ -109,22 +196,58 @@ const Leaderboard = ({ darkMode, userId, userScore, isMobile }) => {
     try {
       setLoading(true);
       setError(null);
+      setPermissionError(null);
       console.log("📊 Fetching ALL leaderboard pages (debug-only)...");
 
       const docs = await getAllLeaderboard({ pageSize: 200 });
       const leaders = [];
       const raw = [];
 
-      docs.forEach((d) => {
-        const data = d.data || d.data;
+      for (const d of docs) {
+        const data = extractDocData(d);
         raw.push({ id: d.id, data });
 
-        if (data && data.userId && data.name && data.name !== "مستخدم جديد") {
+        // Enrich missing display names and avatar with error handling
+        let name = data?.name;
+        let photo = data?.avatarURL || data?.photoURL || null;
+        try {
+          if (!name || name === "مستخدم" || name === "مستخدم جديد" || !photo) {
+            const profile = await getUserProfile(data.userId);
+            if (profile) {
+              if (
+                !name &&
+                (profile.name || profile.fullName || profile.displayName)
+              ) {
+                name = profile.name || profile.fullName || profile.displayName;
+              }
+              if (!photo) {
+                photo =
+                  profile.avatarURL ||
+                  profile.photoURL ||
+                  (profile.avatarSeed
+                    ? `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(
+                        profile.avatarSeed
+                      )}&size=100`
+                    : null);
+              }
+            }
+          }
+        } catch (err) {
+          console.warn(
+            "Could not enrich leaderboard profile for",
+            data?.userId,
+            err
+          );
+        }
+
+        if (data && data.userId) {
           leaders.push({
             id: d.id,
             userId: data.userId,
-            name: data.name,
-            photoURL: data.photoURL || "",
+            name: name || data.userName || data.fullName || "مستخدم",
+            avatarSeed: data?.avatarSeed || null,
+            avatarURL: data?.avatarURL || null,
+            photoURL: photo || "",
             totalXP: data.totalXP ?? data.totalScore ?? 0,
             completedGames: data.completedGames || 0,
             completedUnits: data.completedUnits || 0,
@@ -132,21 +255,31 @@ const Leaderboard = ({ darkMode, userId, userScore, isMobile }) => {
             rank: leaders.length + 1,
           });
         }
-      });
+      }
 
       setRawDocs(raw);
       setLeaderboardData(leaders);
       setLastUpdated(new Date());
     } catch (err) {
       console.error("❌ Error fetching ALL leaderboard:", err);
-      setError("فشل في تحميل لوحة المتصدرين (كل المستخدمين)");
+      if (err.code === "permission-denied") {
+        setPermissionError("ليس لديك صلاحية لعرض جميع بيانات التصنيف.");
+        setError("لا يمكن تحميل التصنيف الكامل بسبب قيود الصلاحيات.");
+      } else {
+        setError("فشل في تحميل لوحة المتصدرين (كل المستخدمين)");
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  // 🎯 Real-time leaderboard updates
+  // 🎯 Real-time leaderboard updates with enhanced error handling
   useEffect(() => {
+    if (!userId) {
+      console.log("👤 No user ID, skipping real-time leaderboard setup");
+      return;
+    }
+
     console.log(
       "👂 Setting up real-time leaderboard listener (service) for top 20..."
     );
@@ -161,21 +294,59 @@ const Leaderboard = ({ darkMode, userId, userScore, isMobile }) => {
           const currentUser = await fetchCurrentUserData();
           setCurrentUserData(currentUser);
 
-          docs.forEach((d) => {
-            const data = d.data;
+          for (const d of docs) {
+            const data = extractDocData(d);
             raw.push({ id: d.id, data });
 
-            if (
-              data &&
-              data.userId &&
-              data.name &&
-              data.name !== "مستخدم جديد"
-            ) {
+            // Enrich missing display names and avatar in realtime updates with error handling
+            let name = data?.name;
+            let photo = data?.avatarURL || data?.photoURL || null;
+            try {
+              if (
+                !name ||
+                name === "مستخدم" ||
+                name === "مستخدم جديد" ||
+                !photo
+              ) {
+                const profile = await getUserProfile(data.userId);
+                if (profile) {
+                  if (
+                    !name &&
+                    (profile.name || profile.fullName || profile.displayName)
+                  ) {
+                    name =
+                      profile.name || profile.fullName || profile.displayName;
+                  }
+                  if (!photo) {
+                    photo =
+                      profile.avatarURL ||
+                      profile.photoURL ||
+                      (profile.avatarSeed
+                        ? `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(
+                            profile.avatarSeed
+                          )}&size=100`
+                        : null);
+                  }
+                }
+              }
+            } catch (err) {
+              console.warn(
+                "Could not enrich realtime leaderboard profile for",
+                data?.userId,
+                err
+              );
+            }
+
+            // fall back to doc id when data.userId is missing
+            const uid = data?.userId || d.id;
+            if (data && uid) {
               leaders.push({
                 id: d.id,
-                userId: data.userId,
-                name: data.name,
-                photoURL: data.photoURL || "",
+                userId: uid,
+                name: name || data.userName || data.fullName || "مستخدم",
+                avatarSeed: data?.avatarSeed || null,
+                avatarURL: data?.avatarURL || null,
+                photoURL: photo || "",
                 totalXP: data.totalXP ?? data.totalScore ?? 0,
                 completedGames: data.completedGames || 0,
                 completedUnits: data.completedUnits || 0,
@@ -183,14 +354,46 @@ const Leaderboard = ({ darkMode, userId, userScore, isMobile }) => {
                 rank: leaders.length + 1,
               });
             }
-          });
+          }
 
           setRawDocs(raw);
           console.log("🔄 Real-time update - Players:", leaders.length);
+
+          // If real-time snapshot returned no docs but we have a current user,
+          // include the user's own entry so they see at least their score.
+          if (leaders.length === 0 && currentUserData) {
+            leaders.push({
+              id:
+                currentUserData.userId || currentUserData.uid || userId || "me",
+              userId:
+                currentUserData.userId || currentUserData.uid || userId || "me",
+              name:
+                currentUserData.name ||
+                currentUserData.userName ||
+                currentUserData.fullName ||
+                "مستخدم",
+              photoURL:
+                currentUserData.avatarURL || currentUserData.photoURL || "",
+              totalXP:
+                currentUserData.totalXP ??
+                currentUserData.totalScore ??
+                userScore ??
+                0,
+              completedGames: currentUserData.completedGames || 0,
+              completedUnits: currentUserData.completedUnits || 0,
+              lastUpdated: currentUserData.lastUpdated || null,
+              rank: 1,
+            });
+          }
+
           setLeaderboardData(leaders);
           setLastUpdated(new Date());
+          setPermissionError(null); // Clear permission errors on successful update
         } catch (err) {
           console.error("❌ Error processing realtime leaderboard docs:", err);
+          if (err.code === "permission-denied") {
+            setPermissionError("ليس لديك صلاحية للتحديث اللحظي للتصنيف.");
+          }
           setError("خطأ في التحديث اللحظي للتصنيف");
         }
       },
@@ -215,17 +418,31 @@ const Leaderboard = ({ darkMode, userId, userScore, isMobile }) => {
     if (player.userId === userId && currentUserData) {
       return {
         name: currentUserData.name || "مستخدم",
-        photoURL: currentUserData.photoURL || "",
+        photoURL:
+          currentUserData.avatarURL ||
+          currentUserData.photoURL ||
+          (currentUserData.avatarSeed
+            ? `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(
+                currentUserData.avatarSeed
+              )}&size=100`
+            : ""),
         totalXP: currentUserData.totalXP ?? currentUserData.totalScore ?? 0,
         completedGames: currentUserData.completedGames || 0,
         completedUnits: currentUserData.completedUnits || 0,
       };
     }
 
-    // For other users, use the data from leaderboard
+    // For other users, prefer avatarURL, then provided photoURL, then avatarSeed
     return {
       name: player.name,
-      photoURL: player.photoURL,
+      photoURL:
+        player.avatarURL ||
+        player.photoURL ||
+        (player.avatarSeed
+          ? `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(
+              player.avatarSeed
+            )}&size=100`
+          : ""),
       totalXP: player.totalXP ?? player.totalScore ?? 0,
       completedGames: player.completedGames,
       completedUnits: player.completedUnits,
@@ -311,44 +528,32 @@ const Leaderboard = ({ darkMode, userId, userScore, isMobile }) => {
     );
   }
 
-  if (error) {
-    return (
-      <Box
-        className={`rounded-2xl p-4 sm:p-6 shadow-lg ${
-          darkMode ? "bg-gray-800/60" : "bg-white"
-        }`}
-      >
-        <Typography
-          variant="h6"
-          className={`flex items-center mb-4 ${
-            isMobile ? "text-lg" : "text-xl"
-          }`}
-        >
-          <EmojiEvents className="ml-2 text-yellow-500" />
-          لوحة المتصدرين
-        </Typography>
-
-        <Box className="text-center py-4">
-          <Typography className="text-red-500 mb-2">{error}</Typography>
-          <Button
-            variant="outlined"
-            startIcon={<Refresh />}
-            onClick={fetchLeaderboard}
-            size="small"
-          >
-            إعادة المحاولة
-          </Button>
-        </Box>
-      </Box>
-    );
-  }
-
   return (
     <Box
       className={`rounded-2xl p-4 sm:p-6 shadow-lg ${
         darkMode ? "bg-gray-800/60" : "bg-white"
       }`}
     >
+      {/* Permission Error Alert */}
+      {permissionError && (
+        <Alert
+          severity="warning"
+          className="mb-4"
+          icon={<Warning />}
+          action={
+            <Button
+              color="inherit"
+              size="small"
+              onClick={() => setPermissionError(null)}
+            >
+              إخفاء
+            </Button>
+          }
+        >
+          {permissionError}
+        </Alert>
+      )}
+
       <div className="flex justify-between items-center mb-4">
         <Typography
           variant="h6"
@@ -360,7 +565,20 @@ const Leaderboard = ({ darkMode, userId, userScore, isMobile }) => {
 
         {/* Manual update buttons removed - leaderboard listens in real-time */}
       </div>
-      {leaderboardData.length === 0 ? (
+
+      {error ? (
+        <Box className="text-center py-4">
+          <Typography className="text-red-500 mb-2">{error}</Typography>
+          <Button
+            variant="outlined"
+            startIcon={<Refresh />}
+            onClick={fetchLeaderboard}
+            size="small"
+          >
+            إعادة المحاولة
+          </Button>
+        </Box>
+      ) : leaderboardData.length === 0 ? (
         <Box className="text-center py-6">
           <Person
             sx={{ fontSize: 48, color: darkMode ? "#666" : "#999", mb: 2 }}

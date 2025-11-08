@@ -1,4 +1,4 @@
-// MainComDep.jsx - FIXED CIRCULAR DEPENDENCY
+// MainComDep.jsx - FIXED FIREBASE PERMISSIONS
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Avatar, Button, useMediaQuery, useTheme } from "@mui/material";
@@ -18,22 +18,20 @@ import {
 } from "@mui/icons-material";
 import Leaderboard from "./../LeaderboardComp/Leaderboard";
 import {
-  doc,
-  getDoc,
-  onSnapshot,
-  serverTimestamp,
-  collection,
-  getDocs,
-} from "firebase/firestore";
-import {
   saveUserProgress,
   saveGameScore,
   getUserScores,
   getUserLessons,
   resetUserProgress,
   saveLessonCompletion,
-} from "./../../../FireBaseDatabase/firestoreService";
+  getUserProgress,
+  getUserOverall,
+  onUserScoresChange,
+  onUserLessonsChange,
+} from "./progressService";
+import { useAuth } from "../../../contexts/AuthContext";
 import { db } from "../../../FireBaseDatabase/firebase";
+
 export default function MainComDep() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -50,6 +48,8 @@ export default function MainComDep() {
   const userData =
     passedUserData || (storedUserData ? JSON.parse(storedUserData) : null);
 
+  const { user: authUser, loading: authLoading } = useAuth();
+
   const name = userData?.fullName || userData?.name || "مستخدم غير معروف";
   const photo =
     userData?.photoURL || "https://placehold.co/100x100/10b981/ffffff?text=U";
@@ -60,6 +60,7 @@ export default function MainComDep() {
   const [isLoading, setIsLoading] = useState(true);
   const [gameScores, setGameScores] = useState({});
   const [lessonCompletions, setLessonCompletions] = useState({});
+  const [firebaseError, setFirebaseError] = useState("");
 
   // 🎯 Refs to prevent unnecessary re-renders
   const progressDataRef = useRef([]);
@@ -68,15 +69,14 @@ export default function MainComDep() {
   const isInitializedRef = useRef(false);
 
   // 🎯 Units model: each unit contains its lessons and games with max points.
-  // This makes scoring deterministic and easy to change per-unit.
   const units = useMemo(
     () => [
       {
         id: 0,
         label: "الوحدة الأولى: أساسيات البرمجة",
         color: "teal",
-        lessonWeight: 0.4, // 40% of unit
-        gameWeight: 0.6, // 60% of unit
+        lessonWeight: 0.4,
+        gameWeight: 0.6,
         lessons: [
           {
             id: "intro-programming",
@@ -219,7 +219,6 @@ export default function MainComDep() {
 
   // 🎯 Initialize progress data structure
   const getInitialProgressData = useCallback(() => {
-    // Create initial progress entries derived from `units` model so it's DRY and consistent
     return units.map((u, idx) => {
       const totalGames = (u.games || []).length;
       const totalLessons = (u.lessons || []).length;
@@ -235,7 +234,6 @@ export default function MainComDep() {
         (u.gameWeight || 0.6) * 100 + (u.lessonWeight || 0.4) * 100
       );
 
-      // default required score thresholds (fallback to index * 30 if not configured)
       const defaultThresholds = [0, 30, 60, 90];
 
       return {
@@ -255,7 +253,7 @@ export default function MainComDep() {
         lessonScore: 0,
       };
     });
-  }, []);
+  }, [units]);
 
   // 🎯 Get games by unit
   const getGamesByUnit = useCallback(
@@ -294,11 +292,8 @@ export default function MainComDep() {
   }, [progressData]);
 
   // 🎯 Get grid classes for responsive design
-  // Accepts either a numeric count (preferred) or the special string 'stats'.
-  // This keeps layout flexible: small counts shrink columns, large counts expand.
   const getGridClasses = useCallback(
     (countOrKey) => {
-      // Preserve the old 'stats' behavior when explicitly requested
       if (typeof countOrKey === "string" && countOrKey === "stats") {
         return isMobile ? "grid-cols-2" : "grid-cols-4";
       }
@@ -309,59 +304,66 @@ export default function MainComDep() {
       if (isTablet) {
         if (count <= 1) return "grid-cols-1";
         if (count === 2) return "grid-cols-2";
-        return "grid-cols-2"; // tablet stays at 2 cols for readability
+        return "grid-cols-2";
       }
 
-      // Desktop
       if (count <= 1) return "grid-cols-1";
       if (count === 2) return "grid-cols-2";
       if (count === 3) return "grid-cols-3";
-      return "grid-cols-3"; // don't exceed 3 by default; keep cards readable
+      return "grid-cols-3";
     },
     [isMobile, isTablet]
   );
 
-  // 🎯 Load individual game scores from Firebase
+  // 🎯 Load individual game scores from Firebase with error handling
   const loadIndividualGameScores = useCallback(async () => {
-    if (!userData?.uid) {
-      console.log("❌ No user UID found");
+    const effectiveUid = authUser?.uid || userData?.uid;
+    if (!effectiveUid || !authUser) {
+      console.log(
+        "❌ No authenticated Firebase user - skipping loadIndividualGameScores"
+      );
       return {};
     }
     try {
-      const scores = await getUserScores(userData.uid);
+      const scores = await getUserScores(effectiveUid);
       console.log("🎮 Loaded individual game scores:", scores);
+      setFirebaseError("");
       return scores;
     } catch (error) {
       console.error("❌ Error loading individual game scores:", error);
+      setFirebaseError("خطأ في تحميل نتائج الألعاب. يرجى تحديث الصفحة.");
       return {};
     }
-  }, [userData?.uid]);
+  }, [authUser, userData?.uid]);
 
-  // 🎯 Load lesson completions from Firebase
+  // 🎯 Load lesson completions from Firebase with error handling
   const loadLessonCompletions = useCallback(async () => {
-    if (!userData?.uid) {
-      console.log("❌ No user UID found for lesson completions");
+    const effectiveUid = authUser?.uid || userData?.uid;
+    if (!effectiveUid || !authUser) {
+      console.log(
+        "❌ No authenticated Firebase user - skipping loadLessonCompletions"
+      );
       return {};
     }
     try {
-      const completions = await getUserLessons(userData.uid);
+      const completions = await getUserLessons(effectiveUid);
       console.log("📚 Loaded lesson completions:", completions);
+      setFirebaseError("");
       return completions;
     } catch (error) {
       console.error("❌ Error loading lesson completions:", error);
+      setFirebaseError("خطأ في تحميل الدروس المكتملة. يرجى تحديث الصفحة.");
       return {};
     }
-  }, [userData?.uid]);
+  }, [authUser, userData?.uid]);
 
   // 🎯 Calculate unit progress based on game scores AND lessons
   const calculateUnitProgress = useCallback(
     (unit, gameScores, lessonCompletions) => {
-      // Use the canonical `units` model to get games/lessons metadata
       const unitDef = units.find((u) => u.id === unit.id) || {};
       const unitGames = unitDef.games || [];
       const unitLessons = unitDef.lessons || [];
 
-      // Calculate game points (60% of unit)
       let totalGameScore = 0;
       let maxPossibleGameScore = 0;
       let completedGames = 0;
@@ -378,7 +380,6 @@ export default function MainComDep() {
         }
       });
 
-      // Calculate lesson points (40% of unit)
       let totalLessonScore = 0;
       let maxPossibleLessonScore = 0;
       let completedLessons = 0;
@@ -392,7 +393,6 @@ export default function MainComDep() {
         }
       });
 
-      // Combine scores: scale games and lessons into unit percentages using unit weights
       const gameContribution =
         maxPossibleGameScore > 0
           ? (totalGameScore / maxPossibleGameScore) *
@@ -426,7 +426,7 @@ export default function MainComDep() {
 
   // 🎯 Calculate which units should be unlocked
   const calculateUnlockedUnits = useCallback((progressData) => {
-    const unlocked = [0]; // Always unlock first unit
+    const unlocked = [0];
 
     progressData.forEach((unit, index) => {
       if (index > 0 && progressData[index - 1]?.completed) {
@@ -443,10 +443,12 @@ export default function MainComDep() {
     return progressData.reduce((sum, unit) => sum + (unit.totalScore || 0), 0);
   }, []);
 
-  // 🎯 Save progress to Firebase
+  // 🎯 Save progress to Firebase with enhanced error handling
   const saveProgressToFirebase = useCallback(async () => {
-    if (!userData?.uid) {
-      console.log("❌ No user UID, skipping Firebase save");
+    const effectiveUid = authUser?.uid || userData?.uid;
+    if (!effectiveUid || !authUser) {
+      console.log("❌ No authenticated Firebase user, skipping Firebase save");
+      setFirebaseError("لتخزين التقدم في السحابة، يرجى تسجيل الدخول أولاً.");
       return;
     }
     try {
@@ -477,7 +479,7 @@ export default function MainComDep() {
         completedUnits,
       };
 
-      await saveUserProgress(userData.uid, {
+      await saveUserProgress(effectiveUid, {
         progressData: progressDataRef.current,
         unlockedUnits,
         totalProgress,
@@ -486,23 +488,28 @@ export default function MainComDep() {
       });
 
       console.log("✅ All progress saved to Firestore (via service)");
+      setFirebaseError("");
     } catch (error) {
       console.error("❌ Error saving to Firestore:", error);
+      if (error.code === "permission-denied") {
+        setFirebaseError(
+          "ليس لديك صلاحية لحفظ البيانات. يرجى تسجيل الدخول مرة أخرى."
+        );
+      } else {
+        setFirebaseError("خطأ في حفظ التقدم. البيانات مخزنة محليًا فقط.");
+      }
     }
-  }, [userData, userScore, unlockedUnits, getTotalProgress]);
+  }, [authUser, userData, userScore, unlockedUnits, getTotalProgress]);
 
   // 🎯 Debounced save scheduler to avoid rapid Firestore writes
   const saveTimeoutRef = useRef(null);
 
   const scheduleSave = useCallback(() => {
-    // Clear previous timer
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
     }
 
-    // Schedule save after short delay (1.5s)
     saveTimeoutRef.current = setTimeout(() => {
-      // flush timer reference
       saveTimeoutRef.current = null;
       saveProgressToFirebase().catch((err) =>
         console.error("❌ Debounced save failed:", err)
@@ -519,7 +526,6 @@ export default function MainComDep() {
       const currentLessonCompletions = await loadLessonCompletions();
       const initialProgress = getInitialProgressData();
 
-      // Calculate progress for each unit
       const updatedProgress = initialProgress.map((unit) => {
         const unitProgress = calculateUnitProgress(
           unit,
@@ -540,27 +546,24 @@ export default function MainComDep() {
         };
       });
 
-      // Calculate total user score
       const newTotalScore = calculateTotalUserScore(updatedProgress);
-
-      // Update unlocked units
       const newUnlockedUnits = calculateUnlockedUnits(updatedProgress);
 
       console.log("💰 Recalculated total score:", newTotalScore);
       console.log("📊 Final progress data:", updatedProgress);
       console.log("🔓 Final unlocked units:", newUnlockedUnits);
 
-      // Update states
       setProgressData(updatedProgress);
       setUserScore(newTotalScore);
       setUnlockedUnits(newUnlockedUnits);
       setGameScores(currentGameScores);
       setLessonCompletions(currentLessonCompletions);
 
-      // Update refs
       progressDataRef.current = updatedProgress;
       gameScoresRef.current = currentGameScores;
       lessonCompletionsRef.current = currentLessonCompletions;
+
+      setFirebaseError("");
 
       return {
         updatedProgress,
@@ -571,6 +574,7 @@ export default function MainComDep() {
       };
     } catch (error) {
       console.error("❌ Error recalculating progress:", error);
+      setFirebaseError("خطأ في حساب التقدم. يرجى تحديث الصفحة.");
       throw error;
     }
   }, [
@@ -582,39 +586,49 @@ export default function MainComDep() {
     calculateUnlockedUnits,
   ]);
 
-  // 🎯 Mark lesson as completed
+  // 🎯 Mark lesson as completed with error handling
   const markLessonCompleted = useCallback(
     async (lessonId, unitId) => {
-      if (!userData?.uid) return;
+      if (!authUser?.uid) {
+        setFirebaseError("يجب تسجيل الدخول لإكمال الدروس.");
+        return;
+      }
 
       try {
-        // Use centralized service helper to save lesson completion
-        await saveLessonCompletion(userData.uid, lessonId, {
+        await saveLessonCompletion(authUser.uid, lessonId, {
           unitId,
           completed: true,
         });
 
         console.log("✅ Lesson marked as completed:", lessonId);
 
-        // Reload lesson completions and recalculate progress
         const updatedCompletions = await loadLessonCompletions();
         setLessonCompletions(updatedCompletions);
         lessonCompletionsRef.current = updatedCompletions;
 
-        // Recalculate all progress
         await recalculateAllProgress();
       } catch (error) {
         console.error("❌ Error marking lesson as completed:", error);
+        if (error.code === "permission-denied") {
+          setFirebaseError("ليس لديك صلاحية لإكمال هذا الدرس.");
+        } else {
+          setFirebaseError("خطأ في حفظ إكمال الدرس.");
+        }
       }
     },
-    [userData?.uid, loadLessonCompletions, recalculateAllProgress]
+    [authUser, loadLessonCompletions, recalculateAllProgress]
   );
 
-  // 🎯 Update game progress and scores
+  // 🎯 Update game progress and scores with error handling
   const updateGameProgress = useCallback(
     async (unitId, gameId, gameData) => {
       if (unitId === null || gameId === null) {
         console.log("❌ Missing unitId or gameId");
+        return;
+      }
+
+      if (!authUser?.uid) {
+        setFirebaseError("يجب تسجيل الدخول لحفظ نتائج الألعاب.");
         return;
       }
 
@@ -631,9 +645,7 @@ export default function MainComDep() {
       });
 
       try {
-        // Use centralized helper to save game score and trigger recalculation
-        if (userData?.uid) {
-          // Prefer rawScore/rawMax if provided by the game; otherwise try to infer from unit/game metadata
+        if (authUser?.uid) {
           const rawScore =
             typeof gameData?.rawScore === "number"
               ? gameData.rawScore
@@ -651,7 +663,7 @@ export default function MainComDep() {
               ? gameData.rawMax
               : gameDef?.maxPoints || gameData?.points || undefined;
 
-          await saveGameScore(userData.uid, gameId, {
+          await saveGameScore(authUser.uid, gameId, {
             unitId,
             rawScore,
             rawMax,
@@ -660,13 +672,17 @@ export default function MainComDep() {
           console.log("✅ Individual score saved for", gameId);
         }
 
-        // Recalculate all progress to reflect changes
         await recalculateAllProgress();
       } catch (error) {
         console.error("❌ Error in updateGameProgress:", error);
+        if (error.code === "permission-denied") {
+          setFirebaseError("ليس لديك صلاحية لحفظ نتائج اللعبة.");
+        } else {
+          setFirebaseError("خطأ في حفظ نتائج اللعبة.");
+        }
       }
     },
-    [userData?.uid, recalculateAllProgress]
+    [authUser, recalculateAllProgress, units]
   );
 
   // 🎯 Get game score for display
@@ -696,7 +712,6 @@ export default function MainComDep() {
   // 🎯 Game completion handler
   useEffect(() => {
     const handleGameCompletion = (event) => {
-      // Check if this is a game completion message
       if (event.data && event.data.type === "GAME_COMPLETE") {
         const { unitId, gameId, gameData } = event.data;
         console.log("🎯 Game completion processed from message:", {
@@ -709,10 +724,8 @@ export default function MainComDep() {
       }
     };
 
-    // Listen for messages from child games
     window.addEventListener("message", handleGameCompletion);
 
-    // Also check for completion data in location state (when navigating back)
     if (location.state?.gameCompletion) {
       const { unitId, gameId, gameData } = location.state;
       console.log("🔄 Game completion from navigation state:", {
@@ -722,7 +735,6 @@ export default function MainComDep() {
       });
       updateGameProgress(unitId, gameId, gameData);
 
-      // Clear the state to avoid processing again
       navigate(location.pathname, { replace: true, state: {} });
     }
 
@@ -737,30 +749,40 @@ export default function MainComDep() {
 
       console.log("🚀 Initializing progress system...");
 
-      if (!userData?.uid) {
-        console.log("👤 No user ID, using default progress");
+      // Prefer authenticated Firebase uid.
+      const effectiveUid = authUser?.uid || userData?.uid;
+
+      if (!effectiveUid || !authUser) {
+        // Not signed in: use default progress and inform the user to sign in
+        console.log(
+          "👤 No authenticated Firebase user - using default progress"
+        );
         const initialProgress = getInitialProgressData();
         setProgressData(initialProgress);
         setUnlockedUnits([0]);
         setUserScore(0);
         setIsLoading(false);
 
-        // Update refs
         progressDataRef.current = initialProgress;
+
+        if (userData?.uid && !authUser) {
+          setFirebaseError(
+            "تم العثور على ملف محلي للمستخدم، لكنك لست مسجلاً في Firebase. سجّل الدخول لمزامنة بياناتك."
+          );
+        }
         return;
       }
 
       setIsLoading(true);
 
       try {
-        console.log("🔄 Checking for existing progress in Firebase...");
+        console.log(
+          "🔄 Checking for existing progress in Firebase via service..."
+        );
 
-        // Try to load existing progress from Firebase
-        const progressRef = doc(db, "users", userData.uid, "progress", "main");
-        const progressSnap = await getDoc(progressRef);
+        const progressData = await getUserProgress(effectiveUid);
 
-        if (progressSnap.exists()) {
-          const progressData = progressSnap.data();
+        if (progressData) {
           console.log("✅ Found existing progress:", progressData);
 
           setProgressData(
@@ -768,41 +790,40 @@ export default function MainComDep() {
           );
           setUnlockedUnits(progressData.unlockedUnits || [0]);
 
-          // Update refs
           progressDataRef.current =
             progressData.progressData || getInitialProgressData();
 
-          // Load user score
-          const scoresRef = doc(db, "users", userData.uid, "scores", "overall");
-          const scoresSnap = await getDoc(scoresRef);
-          if (scoresSnap.exists()) {
-            const scoresData = scoresSnap.data();
+          const scoresData = await getUserOverall(effectiveUid);
+          if (scoresData) {
             setUserScore(scoresData.totalScore || 0);
           }
 
-          // Load individual game scores
           const gameScoresData = await loadIndividualGameScores();
           setGameScores(gameScoresData);
           gameScoresRef.current = gameScoresData;
 
-          // Load lesson completions
           const lessonCompletionsData = await loadLessonCompletions();
           setLessonCompletions(lessonCompletionsData);
           lessonCompletionsRef.current = lessonCompletionsData;
         } else {
           console.log("📝 No existing progress, creating new...");
-          // No existing progress, create new
           await recalculateAllProgress();
         }
       } catch (error) {
         console.error("❌ Error initializing progress:", error);
-        // Fallback to initial progress
+        if (error.message && error.message.includes("صلاحية")) {
+          setFirebaseError(
+            "ليس لديك صلاحية للوصول إلى بيانات التقدم. سجّل الدخول أو تواصل مع المسؤول."
+          );
+        } else {
+          setFirebaseError("خطأ في تحميل بيانات التقدم.");
+        }
+
         const initialProgress = getInitialProgressData();
         setProgressData(initialProgress);
         setUnlockedUnits([0]);
         setUserScore(0);
 
-        // Update refs
         progressDataRef.current = initialProgress;
       }
 
@@ -811,6 +832,7 @@ export default function MainComDep() {
 
     initializeProgress();
   }, [
+    authUser,
     userData?.uid,
     getInitialProgressData,
     recalculateAllProgress,
@@ -820,9 +842,10 @@ export default function MainComDep() {
 
   // 🎯 Save to Firebase when data changes
   useEffect(() => {
-    if (isLoading || !userData?.uid || progressData.length === 0) return;
+    const effectiveUid = authUser?.uid || userData?.uid;
+    if (isLoading || !effectiveUid || !authUser || progressData.length === 0)
+      return;
 
-    // Only schedule save if data actually changed
     const shouldSave =
       JSON.stringify(progressData) !==
         JSON.stringify(progressDataRef.current) ||
@@ -833,12 +856,10 @@ export default function MainComDep() {
     if (shouldSave) {
       console.log("🔄 Data changed, scheduling save to Firebase...");
 
-      // Update refs first
       progressDataRef.current = progressData;
       gameScoresRef.current = gameScores;
       lessonCompletionsRef.current = lessonCompletions;
 
-      // Use debounced scheduler to reduce writes
       scheduleSave();
     }
   }, [
@@ -852,13 +873,12 @@ export default function MainComDep() {
     scheduleSave,
   ]);
 
-  // Flush any pending save on unmount or when user changes
+  // Flush any pending save on unmount
   useEffect(() => {
     return () => {
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current);
         saveTimeoutRef.current = null;
-        // best-effort synchronous save (fire-and-forget)
         saveProgressToFirebase().catch((err) =>
           console.error("❌ Flush save failed on unmount:", err)
         );
@@ -866,110 +886,81 @@ export default function MainComDep() {
     };
   }, [saveProgressToFirebase]);
 
-  // 🎯 REAL-TIME Firestore listeners for game scores
+  // 🎯 REAL-TIME listeners (moved to wrapper) for game scores
   useEffect(() => {
-    if (!userData?.uid) return;
+    const effectiveUid = authUser?.uid || userData?.uid;
+    if (!effectiveUid || !authUser) return;
 
     console.log(
-      "👂 Setting up real-time game scores listener for user:",
-      userData.uid
+      "👂 Setting up real-time game scores listener (wrapper) for user:",
+      effectiveUid
     );
 
-    const scoresCollection = collection(db, "users", userData.uid, "scores");
+    const unsubscribe = onUserScoresChange(effectiveUid, (updatedScores) => {
+      try {
+        console.log(
+          "🔄 Real-time game scores update (wrapper):",
+          updatedScores
+        );
 
-    const unsubscribe = onSnapshot(
-      scoresCollection,
-      (snapshot) => {
-        const updatedScores = {};
-
-        snapshot.forEach((doc) => {
-          const data = doc.data();
-          updatedScores[data.gameId] = {
-            score: data.score || 0,
-            completed: data.completed || false,
-            lastPlayed: data.lastPlayed,
-            unitId: data.unitId,
-            points: data.points || 0,
-          };
-        });
-
-        console.log("🔄 Real-time game scores update:", updatedScores);
-
-        // Only update if scores actually changed
         if (
           JSON.stringify(updatedScores) !==
           JSON.stringify(gameScoresRef.current)
         ) {
           setGameScores(updatedScores);
           gameScoresRef.current = updatedScores;
-
-          // Recalculate progress with new scores
           recalculateAllProgress().catch(console.error);
         }
-      },
-      (err) => {
-        console.error("❌ Game scores snapshot error:", err);
+      } catch (err) {
+        console.error("Error handling onUserScoresChange callback:", err);
       }
-    );
+    });
 
     return () => {
-      console.log("🧹 Cleaning up game scores listener");
-      unsubscribe();
+      console.log("🧹 Cleaning up game scores listener (wrapper)");
+      if (typeof unsubscribe === "function") unsubscribe();
     };
-  }, [userData?.uid, recalculateAllProgress]);
+  }, [authUser, userData?.uid, recalculateAllProgress]);
 
-  // 🎯 REAL-TIME Firestore listeners for lesson completions
+  // 🎯 REAL-TIME listeners (moved to wrapper) for lesson completions
   useEffect(() => {
-    if (!userData?.uid) return;
+    const effectiveUid = authUser?.uid || userData?.uid;
+    if (!effectiveUid || !authUser) return;
 
     console.log(
-      "👂 Setting up real-time lesson completions listener for user:",
-      userData.uid
+      "👂 Setting up real-time lesson completions listener (wrapper) for user:",
+      effectiveUid
     );
 
-    const lessonsCollection = collection(db, "users", userData.uid, "lessons");
+    const unsubscribe = onUserLessonsChange(
+      effectiveUid,
+      (updatedCompletions) => {
+        try {
+          console.log(
+            "🔄 Real-time lesson completions update (wrapper):",
+            updatedCompletions
+          );
 
-    const unsubscribe = onSnapshot(
-      lessonsCollection,
-      (snapshot) => {
-        const updatedCompletions = {};
+          if (
+            JSON.stringify(updatedCompletions) !==
+            JSON.stringify(lessonCompletionsRef.current)
+          ) {
+            setLessonCompletions(updatedCompletions);
+            lessonCompletionsRef.current = updatedCompletions;
 
-        snapshot.forEach((doc) => {
-          const data = doc.data();
-          updatedCompletions[data.lessonId] = {
-            completed: data.completed || false,
-            lastUpdated: data.lastUpdated,
-            unitId: data.unitId,
-          };
-        });
-
-        console.log(
-          "🔄 Real-time lesson completions update:",
-          updatedCompletions
-        );
-
-        // Only update if completions actually changed
-        if (
-          JSON.stringify(updatedCompletions) !==
-          JSON.stringify(lessonCompletionsRef.current)
-        ) {
-          setLessonCompletions(updatedCompletions);
-          lessonCompletionsRef.current = updatedCompletions;
-
-          // Recalculate progress with new completions
-          recalculateAllProgress().catch(console.error);
+            recalculateAllProgress().catch(console.error);
+          }
+        } catch (err) {
+          console.error("Error handling onUserLessonsChange callback:", err);
         }
-      },
-      (err) => {
-        console.error("❌ Lesson completions snapshot error:", err);
       }
     );
 
     return () => {
-      console.log("🧹 Cleaning up lesson completions listener");
-      unsubscribe();
+      console.log("🧹 Cleaning up lesson completions listener (wrapper)");
+      if (typeof unsubscribe === "function") unsubscribe();
     };
-  }, [userData?.uid, recalculateAllProgress]);
+  }, [authUser, userData?.uid, recalculateAllProgress]);
 
   // 🎯 Handle navigation
   const handleOpen = useCallback(
@@ -998,9 +989,12 @@ export default function MainComDep() {
     [unlockedUnits, userData, darkMode, navigate]
   );
 
-  // 🎯 Debug function to reset progress
+  // 🎯 Debug function to reset progress with error handling
   const resetProgress = async () => {
-    if (!userData?.uid) return;
+    if (!authUser?.uid) {
+      setFirebaseError("يجب تسجيل الدخول لإعادة التعيين.");
+      return;
+    }
 
     if (
       window.confirm(
@@ -1008,10 +1002,8 @@ export default function MainComDep() {
       )
     ) {
       try {
-        // Use service helper to reset user progress in Firestore
-        await resetUserProgress(userData.uid);
+        await resetUserProgress(authUser.uid);
 
-        // Reset local state
         const initialProgress = getInitialProgressData();
         setProgressData(initialProgress);
         setUnlockedUnits([0]);
@@ -1019,15 +1011,19 @@ export default function MainComDep() {
         setGameScores({});
         setLessonCompletions({});
 
-        // Update refs
         progressDataRef.current = initialProgress;
         gameScoresRef.current = {};
         lessonCompletionsRef.current = {};
 
+        setFirebaseError("");
         alert("تم إعادة تعيين التقدم بنجاح!");
       } catch (error) {
         console.error("Error resetting progress:", error);
-        alert("حدث خطأ أثناء إعادة التعيين");
+        if (error.code === "permission-denied") {
+          setFirebaseError("ليس لديك صلاحية لإعادة تعيين التقدم.");
+        } else {
+          setFirebaseError("حدث خطأ أثناء إعادة التعيين");
+        }
       }
     }
   };
@@ -1054,6 +1050,22 @@ export default function MainComDep() {
       } flex flex-col items-center justify-start py-4 sm:py-6 px-3 sm:px-6`}
       dir="rtl"
     >
+      {/* Firebase Error Alert */}
+      {firebaseError && (
+        <div className="w-full max-w-7xl mb-4">
+          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative">
+            <strong className="font-bold">خطأ في Firebase: </strong>
+            <span className="block sm:inline">{firebaseError}</span>
+            <button
+              className="absolute top-0 bottom-0 right-0 px-4 py-3"
+              onClick={() => setFirebaseError("")}
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Navbar */}
       <div
         className={`w-full max-w-7xl flex justify-between items-center p-3 sm:p-4 mb-4 sm:mb-6 rounded-2xl shadow-lg ${
@@ -1188,21 +1200,24 @@ export default function MainComDep() {
               }
             </p>
             <p>معرف المستخدم: {userData?.uid || "غير متوفر"}</p>
+            {firebaseError && (
+              <p className="text-red-500">خطأ: {firebaseError}</p>
+            )}
           </div>
         </details>
       </div>
 
-      {/* Main content - UPDATED LAYOUT */}
+      {/* Main content */}
       <div
         className={`w-full max-w-7xl flex flex-col lg:flex-row gap-4 sm:gap-6 ${
           isDesktop ? "flex-row" : "flex-col"
         }`}
       >
-        {/* Left: Progress & Leaderboard - UPDATED SIZES */}
+        {/* Left: Progress & Leaderboard */}
         <div
           className={`space-y-4 sm:space-y-6 ${isDesktop ? "w-1/3" : "w-full"}`}
         >
-          {/* Progress - ENLARGED */}
+          {/* Progress */}
           <div
             className={`rounded-2xl p-4 sm:p-6 shadow-lg ${
               darkMode ? "bg-gray-800/60" : "bg-white"
@@ -1247,7 +1262,6 @@ export default function MainComDep() {
                     {unit.percentage}%
                   </span>
                 </div>
-                {/* ENLARGED Progress Bar */}
                 <div className="w-full bg-gray-200 dark:bg-gray-700 h-4 sm:h-6 rounded-full overflow-hidden mb-2">
                   <div
                     className={`h-full bg-gradient-to-r ${
@@ -1286,7 +1300,7 @@ export default function MainComDep() {
               </div>
             ))}
 
-            {/* Reset Button moved to end of progress section */}
+            {/* Reset Button */}
             <div className="mt-6 pt-4 border-t border-gray-300 dark:border-gray-600">
               <Button
                 onClick={resetProgress}
@@ -1301,7 +1315,7 @@ export default function MainComDep() {
             </div>
           </div>
 
-          {/* Leaderboard - ENLARGED and UPDATED */}
+          {/* Leaderboard */}
           <div
             className={`rounded-2xl p-4 sm:p-6 shadow-lg ${
               darkMode ? "bg-gray-800/60" : "bg-white"
@@ -1316,7 +1330,7 @@ export default function MainComDep() {
           </div>
         </div>
 
-        {/* Right: Units, Lessons & Games - UPDATED LAYOUT */}
+        {/* Right: Units, Lessons & Games */}
         <div
           className={`space-y-4 sm:space-y-6 ${isDesktop ? "w-2/3" : "w-full"}`}
         >
@@ -1402,26 +1416,22 @@ export default function MainComDep() {
                                   }
                                 }}
                               >
-                                {/* Animated Background Gradient */}
                                 <div
                                   className={`absolute inset-0 scale-x-0 group-hover:scale-x-100 origin-left transition-transform duration-700 bg-gradient-to-br ${lesson.gradient}`}
                                 ></div>
 
-                                {/* Completion Checkmark */}
                                 {isCompleted && (
                                   <div className="absolute top-2 right-2 z-20">
                                     <CheckCircle className="text-green-500 text-2xl bg-white rounded-full" />
                                   </div>
                                 )}
 
-                                {/* Lock Overlay */}
                                 {!isUnlocked && (
                                   <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-10">
                                     <Lock className="text-white text-2xl sm:text-4xl" />
                                   </div>
                                 )}
 
-                                {/* Content */}
                                 <div className="relative z-10 flex flex-col items-center justify-center p-4 sm:p-6 text-center min-h-[120px] sm:min-h-[140px]">
                                   <span className="text-2xl sm:text-3xl mb-2 sm:mb-3 transition-transform duration-500 group-hover:animate-bounce">
                                     {lesson.emoji}
@@ -1490,7 +1500,6 @@ export default function MainComDep() {
                                 handleOpen(game.path, unit.id, game.gameId)
                               }
                             >
-                              {/* Enhanced Hover Effect - From Both Sides */}
                               <div
                                 className={`absolute inset-y-0 left-0 w-0 group-hover:w-1/2 transition-all duration-700 bg-gradient-to-r ${game.gradientLeft}`}
                               ></div>
@@ -1498,21 +1507,18 @@ export default function MainComDep() {
                                 className={`absolute inset-y-0 right-0 w-0 group-hover:w-1/2 transition-all duration-700 bg-gradient-to-l ${game.gradientRight}`}
                               ></div>
 
-                              {/* Lock Overlay */}
                               {!isUnlocked && (
                                 <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-10">
                                   <Lock className="text-white text-2xl sm:text-4xl" />
                                 </div>
                               )}
 
-                              {/* Completion Checkmark */}
                               {isCompleted && (
                                 <div className="absolute top-2 right-2 z-20">
                                   <CheckCircle className="text-green-500 text-2xl bg-white rounded-full" />
                                 </div>
                               )}
 
-                              {/* Content */}
                               <div className="relative z-10 flex flex-col items-center justify-center p-4 sm:p-6 text-center text-black min-h-[160px] sm:min-h-[200px]">
                                 <span
                                   className={`mb-3 sm:mb-4 transform group-hover:scale-110 transition-transform duration-300 ${
@@ -1555,8 +1561,6 @@ export default function MainComDep() {
               </div>
             );
           })}
-
-          {/* Announcements removed - simplified layout */}
 
           {/* User Stats Card */}
           <div

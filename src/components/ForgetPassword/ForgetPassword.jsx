@@ -1,10 +1,8 @@
 import { useState } from "react";
 import logo from "../../assets/logo/logo.png";
 import { Link } from "react-router-dom";
-import { auth, db } from "../../FireBaseDatabase/firebase";
+import { auth } from "../../FireBaseDatabase/firebase";
 import { sendPasswordResetEmail } from "firebase/auth";
-import /*doc, setDoc, getDoc*/ "firebase/firestore";
-import { updateUserFields } from "../../FireBaseDatabase/firestoreService";
 import ToastManager from "../Toast/ToastManager";
 
 const ForgetPassword = () => {
@@ -26,19 +24,8 @@ const ForgetPassword = () => {
     setLoading(true);
 
     try {
-      // إرسال رابط استعادة كلمة المرور
+      // إرسال رابط استعادة كلمة المرور فقط
       await sendPasswordResetEmail(auth, email);
-
-      // Firestore: تسجيل وقت طلب إعادة التعيين (اختياري) — only if user is signed in
-      if (auth.currentUser?.uid) {
-        try {
-          await updateUserFields(auth.currentUser.uid, {
-            lastPasswordReset: Date.now(),
-          });
-        } catch (err) {
-          console.warn("Could not write lastPasswordReset:", err);
-        }
-      }
 
       showToast(
         "تم إرسال رابط استعادة كلمة المرور إلى بريدك الإلكتروني.",
@@ -46,10 +33,15 @@ const ForgetPassword = () => {
       );
       setEmail("");
     } catch (error) {
+      console.error("Password reset error:", error);
       if (error.code === "auth/user-not-found") {
         showToast("لا يوجد مستخدم بهذا البريد الإلكتروني.", "error");
       } else if (error.code === "auth/invalid-email") {
         showToast("البريد الإلكتروني غير صالح.", "error");
+      } else if (error.code === "auth/operation-not-allowed") {
+        showToast("إعادة تعيين كلمة المرور غير مفعلة حاليًا.", "error");
+      } else if (error.code === "auth/too-many-requests") {
+        showToast("طلبات كثيرة جدًا. يرجى المحاولة لاحقًا.", "error");
       } else {
         showToast("حدث خطأ أثناء إرسال الرابط. حاول مرة أخرى.", "error");
       }

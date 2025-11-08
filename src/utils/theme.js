@@ -1,4 +1,4 @@
-import { updateUserFields } from "../FireBaseDatabase/firestoreService";
+import { updateUserFields } from "../components/Departments/ComputerDep/progressService";
 
 const STORAGE_KEY = "plrn_theme"; // 'dark' | 'light'
 

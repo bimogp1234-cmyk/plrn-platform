@@ -19,7 +19,7 @@ import {
 import {
   ensureUserInitialized,
   updateUserFields,
-} from "../../FireBaseDatabase/firestoreService";
+} from "../Departments/ComputerDep/progressService";
 
 const LoginForm = () => {
   const [formState, setFormState] = useState({ identifier: "", password: "" });
@@ -74,23 +74,51 @@ const LoginForm = () => {
       }
 
       const email = userDoc.data().email;
-      await signInWithEmailAndPassword(auth, email, formState.password);
+      const userCredential = await signInWithEmailAndPassword(
+        auth,
+        email,
+        formState.password
+      );
+      const user = userCredential.user;
+
       // Ensure user exists in canonical format and update lastLogin
-      await ensureUserInitialized(userDoc.id, {
+      await ensureUserInitialized(user.uid, {
         fullName: userDoc.data().fullName,
         username: userDoc.data().username,
         email: userDoc.data().email,
         provider: userDoc.data().provider || "email",
         agree: userDoc.data().agree || false,
       });
-      await updateUserFields(userDoc.id, { lastLogin: Date.now() });
+      await updateUserFields(user.uid, { lastLogin: Date.now() });
 
       window.location.href = "/dashboard";
     } catch (err) {
-      console.error(err);
-      setError(
-        "فشل تسجيل الدخول. تحقق من البيانات أو جرب تسجيل الدخول عبر Google."
-      );
+      console.error("Login error:", err);
+      let errorMessage =
+        "فشل تسجيل الدخول. تحقق من البيانات أو جرب تسجيل الدخول عبر Google.";
+
+      switch (err.code) {
+        case "auth/user-not-found":
+          errorMessage = "لا يوجد مستخدم بهذا البريد الإلكتروني.";
+          break;
+        case "auth/wrong-password":
+          errorMessage = "كلمة المرور غير صحيحة.";
+          break;
+        case "auth/invalid-email":
+          errorMessage = "البريد الإلكتروني غير صالح.";
+          break;
+        case "auth/too-many-requests":
+          errorMessage = "تم إجراء محاولات كثيرة جدًا. يرجى المحاولة لاحقًا.";
+          break;
+        case "permission-denied":
+          errorMessage = "ليس لديك صلاحية للوصول إلى البيانات.";
+          break;
+        default:
+          if (err.message?.includes("permission")) {
+            errorMessage = "خطأ في الصلاحيات. يرجى المحاولة مرة أخرى.";
+          }
+      }
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }
@@ -105,6 +133,7 @@ const LoginForm = () => {
       const user = result.user;
       const userRef = doc(db, "users", user.uid);
       const userSnap = await getDoc(userRef);
+
       if (!userSnap.exists() || !userSnap.data().passwordSet) {
         // Centralize initialization
         await ensureUserInitialized(user.uid, {
@@ -128,8 +157,15 @@ const LoginForm = () => {
         window.location.href = "/dashboard";
       }
     } catch (err) {
-      console.error(err);
-      setError("فشل تسجيل الدخول عبر Google.");
+      console.error("Google login error:", err);
+      let errorMessage = "فشل تسجيل الدخول عبر Google.";
+
+      if (err.code === "permission-denied") {
+        errorMessage = "ليس لديك صلاحية للوصول إلى البيانات.";
+      } else if (err.code === "auth/popup-closed-by-user") {
+        errorMessage = "تم إغلاق نافذة تسجيل الدخول.";
+      }
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }
@@ -158,8 +194,15 @@ const LoginForm = () => {
       setNewPassword("");
       setConfirmPassword("");
     } catch (err) {
-      console.error(err);
-      setError("❌ فشل إضافة كلمة المرور. حاول مرة أخرى.");
+      console.error("Set password error:", err);
+      let errorMessage = "❌ فشل إضافة كلمة المرور. حاول مرة أخرى.";
+
+      if (err.code === "permission-denied") {
+        errorMessage = "❌ ليس لديك صلاحية لتحديث البيانات.";
+      } else if (err.code === "auth/requires-recent-login") {
+        errorMessage = "❌ تحتاج إلى تسجيل الدخول مرة أخرى لتحديث كلمة المرور.";
+      }
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }

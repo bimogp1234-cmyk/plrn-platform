@@ -1,1 +1,36 @@
 node_modules
+
+# OS
+.DS_Store
+
+# Env
+.env
+.env.local
+
+# Build outputs
+dist/
+build/
+
+# Large media / 3D assets
+*.blend
+*.blend1
+*.glb
+*.gltf
+*.fbx
+*.obj
+*.mtl
+*.stl
+
+# Audio
+*.mp3
+*.wav
+*.ogg
+
+# Archives
+*.zip
+*.tar
+*.tar.gz
+*.7z
+
+# VSCode
+.vscode/

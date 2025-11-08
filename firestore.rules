@@ -25,24 +25,15 @@ service cloud.firestore {
 
     // Top-level public leaderboard (used by Leaderboard.jsx)
     match /leaderboard/{entryId} {
-      // Public read to show global leaderboard in UI. Change to isSignedIn() if you want to restrict.
+      // Public read to show global leaderboard in UI.
+      // IMPORTANT: leaderboard documents are derived data and MUST be written
+      // only by trusted server code (Cloud Functions / Admin SDK). Disallow
+      // client-side writes to prevent leaderboard tampering.
+      // Allow reads by anyone (public leaderboard). Allow writes only from
+      // trusted admin callers (using a custom claim `admin`), or by the
+      // server using the Admin SDK which bypasses rules.
       allow read: if true;
-
-      // Only the owner (authenticated) may create/update their entry; prevents clients from writing for other users.
-      allow create: if isSignedIn()
-        && request.auth.uid == request.resource.data.userId
-        && isValidName(request.resource.data.name)
-        && (request.resource.data.photoURL == null || isValidPhotoURL(request.resource.data.photoURL))
-        && (request.resource.data.totalScore == null || isValidScore(request.resource.data.totalScore));
-
-      allow update: if isSignedIn()
-        && resource.data.userId == request.auth.uid
-        // ensure userId cannot be changed
-        && request.resource.data.userId == resource.data.userId
-        && (request.resource.data.totalScore == null || isValidScore(request.resource.data.totalScore));
-
-      // Deletion limited to admin custom claim (set on server)
-      allow delete: if isSignedIn() && request.auth.token.admin == true;
+      allow create, update, delete: if request.auth != null && request.auth.token.admin == true;
     }
 
     // Users collection (each user's profile and subcollections)
@@ -94,14 +85,10 @@ service cloud.firestore {
 
       // Subcollection: leaderboard inside user (optional per-user leaderboard entry)
       match /leaderboard/{entryId} {
+        // Allow public read, but disallow client writes — server functions
+        // should be the only writers to keep leaderboard data trustworthy.
         allow read: if true;
-        allow create: if isOwner(userId)
-          && request.auth.uid == request.resource.data.userId
-          && (request.resource.data.totalScore == null || isValidScore(request.resource.data.totalScore));
-        allow update: if isOwner(userId)
-          && resource.data.userId == request.auth.uid
-          && (request.resource.data.totalScore == null || isValidScore(request.resource.data.totalScore));
-        allow delete: if isSignedIn() && request.auth.token.admin == true;
+        allow create, update, delete: if false;
       }
 
       // Subcollection: games -> users/{userId}/games/{gameId}

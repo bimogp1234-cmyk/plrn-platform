@@ -20,6 +20,8 @@ import AdventureTimeGame from "./components/Games/Adventure Time/src/App";
 // import Puzzle from "./components/Games/Puzzle/Puzzle";
 // Department Imports
 import MainComDep from "./components/Departments/ComputerDep/MainComDep";
+import LessonPage from "./components/Departments/ComputerDep/Lessons/LessonPage";
+import LessonComponent from "./components/Departments/ComputerDep/Lessons/LessonComponent";
 import PhysicDep from "./components/Departments/PhysicsDep/PhysicDep";
 import MathDep from "./components/Departments/MathDep/MathDep";
 import FirstAidDep from "./components/Departments/FirstAidDep/FirstAidDep";
@@ -37,6 +39,8 @@ export default function App() {
             <Route path="/forget-password" element={<ForgetPassword />} />
             <Route path="*" element={<NotFoundPage />} />
             <Route path="maincomdep" element={<MainComDep />} />
+            <Route path="/lessons/:unitId/:lessonId" element={<LessonPage />} />
+            <Route path="/lesson" element={<LessonComponent />} />
             <Route path="physicdep" element={<PhysicDep />} />
             <Route path="mathdep" element={<MathDep />} />
             <Route path="firstaid" element={<FirstAidDep />} />

@@ -10,82 +10,140 @@ import {
   setDoc,
   getDoc,
   writeBatch,
-  serverTimestamp,
   updateDoc,
+  deleteDoc,
 } from "firebase/firestore";
 import { db } from "./firebase";
 
 /**
  * Firestore service: centralizes leaderboard, progress and score operations.
+ * Notes:
+ * - Returns normalized plain objects for documents: { id, ...fields }
+ * - Provides safe wrappers to centralize error messages
  */
+
+const handleFirestoreError = (operation, error, uid = null) => {
+  console.error(
+    `❌ ${operation} failed${uid ? ` for user ${uid}` : ""}:`,
+    error
+  );
+
+  // surface user-friendly messages for common codes, otherwise rethrow
+  if (error && error.code === "permission-denied") {
+    throw new Error(`ليس لديك صلاحية للقيام بهذه العملية.`);
+  } else if (error && error.code === "unavailable") {
+    throw new Error(`الخدمة غير متاحة حاليًا. يرجى المحاولة لاحقًا.`);
+  }
+
+  throw error;
+};
+
+const safeGetDoc = async (docRef, operation = "get document") => {
+  try {
+    return await getDoc(docRef);
+  } catch (error) {
+    handleFirestoreError(operation, error);
+  }
+};
+
+const safeSetDoc = async (docRef, data, operation = "set document") => {
+  try {
+    await setDoc(docRef, data, { merge: true });
+    return true;
+  } catch (error) {
+    handleFirestoreError(operation, error);
+  }
+};
+
+const safeGetDocs = async (queryRef, operation = "get documents") => {
+  try {
+    return await getDocs(queryRef);
+  } catch (error) {
+    handleFirestoreError(operation, error);
+  }
+};
 
 export async function getLeaderboard({ limit = null, cursor = null } = {}) {
   const leaderboardRef = collection(db, "leaderboard");
-  // Order by totalXP (preferred) then fallback to totalScore for older documents.
-  // This makes the leaderboard show entries even if some writers only set totalScore.
-  // Try the preferred composite ordering first. If Firestore requires a composite
-  // index that hasn't been created yet, catch the error and fall back to a
-  // single-field ordering to avoid crashing the UI.
-  const compositeClauses = [
-    orderBy("totalXP", "desc"),
-    orderBy("totalScore", "desc"),
-  ];
-  if (cursor) compositeClauses.push(startAfter(cursor));
-  if (limit) compositeClauses.push(fbLimit(limit));
 
   try {
+    const compositeClauses = [
+      orderBy("totalXP", "desc"),
+      orderBy("totalScore", "desc"),
+    ];
+    if (cursor) compositeClauses.push(startAfter(cursor));
+    if (limit) compositeClauses.push(fbLimit(limit));
+
     const q = query(leaderboardRef, ...compositeClauses);
-    const snap = await getDocs(q);
+    const snap = await safeGetDocs(q, "fetch leaderboard");
+    if (!snap) return [];
+
     const docs = [];
-    snap.forEach((d) => docs.push({ id: d.id, data: d.data() }));
+    snap.forEach((d) => docs.push({ id: d.id, ...(d.data ? d.data() : {}) }));
     return docs;
   } catch (err) {
-    // If the error indicates a missing composite index, retry with a simpler
-    // ordering to keep the leaderboard usable until the index is created.
     console.warn(
       "Leaderboard composite query failed, retrying simpler query:",
       err?.message || err
     );
-    const fallbackClauses = [orderBy("totalXP", "desc")];
-    if (cursor) fallbackClauses.push(startAfter(cursor));
-    if (limit) fallbackClauses.push(fbLimit(limit));
-    const q2 = query(leaderboardRef, ...fallbackClauses);
-    const snap2 = await getDocs(q2);
-    const docs2 = [];
-    snap2.forEach((d) => docs2.push({ id: d.id, data: d.data() }));
-    return docs2;
+
+    try {
+      const fallbackClauses = [orderBy("totalXP", "desc")];
+      if (cursor) fallbackClauses.push(startAfter(cursor));
+      if (limit) fallbackClauses.push(fbLimit(limit));
+
+      const q2 = query(leaderboardRef, ...fallbackClauses);
+      const snap2 = await safeGetDocs(q2, "fetch leaderboard fallback");
+      if (!snap2) return [];
+
+      const docs2 = [];
+      snap2.forEach((d) =>
+        docs2.push({ id: d.id, ...(d.data ? d.data() : {}) })
+      );
+      return docs2;
+    } catch (fallbackError) {
+      console.error("Both leaderboard queries failed:", fallbackError);
+      return [];
+    }
   }
 }
 
-// Paginated helper to fetch all leaderboard documents in pages to avoid
-// hitting Firestore memory limits. Fetches pages of `pageSize` until no more
-// documents remain and returns the concatenated list.
 export async function getAllLeaderboard({ pageSize = 100 } = {}) {
   const leaderboardRef = collection(db, "leaderboard");
   const all = [];
   let lastDoc = null;
-  while (true) {
-    const clauses = [orderBy("totalXP", "desc"), orderBy("totalScore", "desc")];
-    if (lastDoc) clauses.push(startAfter(lastDoc));
-    clauses.push(fbLimit(pageSize));
-    const q = query(leaderboardRef, ...clauses);
-    const snap = await getDocs(q);
-    const page = [];
-    snap.forEach((d) => page.push({ id: d.id, data: d.data() }));
-    if (page.length === 0) break;
-    all.push(...page);
-    lastDoc = snap.docs[snap.docs.length - 1];
-    // If fewer than pageSize returned, we're done.
-    if (page.length < pageSize) break;
+
+  try {
+    while (true) {
+      const clauses = [
+        orderBy("totalXP", "desc"),
+        orderBy("totalScore", "desc"),
+      ];
+      if (lastDoc) clauses.push(startAfter(lastDoc));
+      clauses.push(fbLimit(pageSize));
+
+      const q = query(leaderboardRef, ...clauses);
+      const snap = await safeGetDocs(q, "fetch leaderboard page");
+      if (!snap) break;
+
+      const page = [];
+      snap.forEach((d) => page.push({ id: d.id, ...(d.data ? d.data() : {}) }));
+      if (page.length === 0) break;
+
+      all.push(...page);
+      lastDoc = snap.docs[snap.docs.length - 1];
+      if (page.length < pageSize) break;
+    }
+    return all;
+  } catch (error) {
+    console.error("Error fetching all leaderboard:", error);
+    return [];
   }
-  return all;
 }
 
 export function onLeaderboardChange(callback, { limit = null } = {}) {
   const leaderboardRef = collection(db, "leaderboard");
-  // Support limited real-time listeners (e.g., top N) while attempting the
-  // preferred composite ordering first, falling back to single-field ordering
-  // if an index is missing.
+
   const compositeQuery = () => {
     const clauses = [orderBy("totalXP", "desc"), orderBy("totalScore", "desc")];
     if (limit) clauses.push(fbLimit(limit));
@@ -100,40 +158,68 @@ export function onLeaderboardChange(callback, { limit = null } = {}) {
 
   try {
     const q = compositeQuery();
-    return onSnapshot(q, (snapshot) => {
-      const docs = [];
-      snapshot.forEach((d) => docs.push({ id: d.id, data: d.data() }));
-      callback(docs);
-    });
+    return onSnapshot(
+      q,
+      (snapshot) => {
+        const docs = [];
+        snapshot.forEach((d) =>
+          docs.push({ id: d.id, ...(d.data ? d.data() : {}) })
+        );
+        callback(docs);
+      },
+      (error) => {
+        console.error("Real-time leaderboard error:", error);
+        // Try fallback query on error
+        try {
+          const q2 = fallbackQuery();
+          return onSnapshot(q2, (snapshot) => {
+            const docs = [];
+            snapshot.forEach((d) =>
+              docs.push({ id: d.id, ...(d.data ? d.data() : {}) })
+            );
+            callback(docs);
+          });
+        } catch (fallbackError) {
+          console.error("Fallback real-time query also failed:", fallbackError);
+          callback([]);
+        }
+      }
+    );
   } catch (err) {
     console.warn(
       "Leaderboard real-time composite query failed, using fallback listener:",
       err?.message || err
     );
+
     const q2 = fallbackQuery();
     return onSnapshot(q2, (snapshot) => {
       const docs = [];
-      snapshot.forEach((d) => docs.push({ id: d.id, data: d.data() }));
+      snapshot.forEach((d) =>
+        docs.push({ id: d.id, ...(d.data ? d.data() : {}) })
+      );
       callback(docs);
     });
   }
 }
 
-// Fetch a single leaderboard entry by uid (convenience helper)
 export async function getLeaderboardEntry(uid) {
   if (!uid) return null;
-  const ref = doc(db, "leaderboard", uid);
-  const snap = await getDoc(ref);
-  if (!snap.exists()) return null;
-  return { id: snap.id, data: snap.data() };
+  try {
+    const ref = doc(db, "leaderboard", uid);
+    const snap = await safeGetDoc(ref, "get leaderboard entry");
+    if (!snap || !snap.exists()) return null;
+    return { id: snap.id, ...(snap.data ? snap.data() : {}) };
+  } catch (error) {
+    console.error("Error getting leaderboard entry:", error);
+    return null;
+  }
 }
 
-// Helper: read top-level user profile document (if present)
-async function getUserProfile(uid) {
+export async function getUserProfile(uid) {
   if (!uid) return null;
   try {
     const userRef = doc(db, "users", uid);
-    const snap = await getDoc(userRef);
+    const snap = await safeGetDoc(userRef, "get user profile");
     return snap && snap.exists() ? snap.data() : null;
   } catch (err) {
     console.warn("getUserProfile failed for", uid, err?.message || err);
@@ -143,127 +229,225 @@ async function getUserProfile(uid) {
 
 export async function setLeaderboardEntry(uid, entry) {
   if (!uid) throw new Error("uid required");
-  const ref = doc(db, "leaderboard", uid);
-  // Ensure we always write a display name (best-effort): prefer provided entry
-  // fields, else fall back to the user's profile document, else a localized
-  // default. Also try to include photoURL when available.
-  let name = entry.name || entry.fullName || entry.userName || null;
-  let photoURL = entry.photoURL || null;
-  if (!name) {
-    const profile = await getUserProfile(uid);
-    if (profile) {
-      name = profile.name || profile.fullName || profile.displayName || null;
-      photoURL = photoURL || profile.photoURL || null;
+
+  try {
+    const ref = doc(db, "leaderboard", uid);
+    let name = entry.name || entry.fullName || entry.userName || null;
+    let photoURL = entry.photoURL || null;
+    const avatarSeed = entry.avatarSeed || null;
+    const avatarURL = entry.avatarURL || null;
+
+    if (!name) {
+      const profile = await getUserProfile(uid);
+      if (profile) {
+        name = profile.name || profile.fullName || profile.displayName || null;
+        photoURL = photoURL || profile.photoURL || null;
+      }
     }
+
+    const payload = {
+      userId: uid,
+      name: name || "مستخدم",
+      photoURL: photoURL || avatarURL || null,
+      avatarSeed: avatarSeed || null,
+      avatarURL: avatarURL || null,
+      totalXP:
+        typeof entry.totalXP === "number"
+          ? entry.totalXP
+          : typeof entry.totalScore === "number"
+          ? entry.totalScore
+          : 0,
+      totalScore: typeof entry.totalScore === "number" ? entry.totalScore : 0,
+      completedGames:
+        typeof entry.completedGames === "number" ? entry.completedGames : 0,
+      completedLessons:
+        typeof entry.completedLessons === "number" ? entry.completedLessons : 0,
+      completedUnits:
+        typeof entry.completedUnits === "number" ? entry.completedUnits : 0,
+      score:
+        typeof entry.score === "number"
+          ? entry.score
+          : typeof entry.totalScore === "number"
+          ? entry.totalScore
+          : 0,
+      updatedAt: entry.updatedAt || Date.now(),
+      lastUpdated: Date.now(),
+      lastActive: entry.lastActive || Date.now(),
+    };
+
+    await safeSetDoc(ref, payload, "set leaderboard entry");
+    return payload;
+  } catch (error) {
+    console.error("Error setting leaderboard entry:", error);
+    throw error;
   }
-  const payload = {
-    userId: uid,
-    name: name || "مستخدم",
-    photoURL: photoURL || null,
-    // canonical field for ranking: totalXP
-    totalXP:
-      typeof entry.totalXP === "number"
-        ? entry.totalXP
-        : typeof entry.totalScore === "number"
-        ? entry.totalScore
-        : 0,
-    // keep legacy field
-    totalScore: typeof entry.totalScore === "number" ? entry.totalScore : 0,
-    completedGames:
-      typeof entry.completedGames === "number" ? entry.completedGames : 0,
-    completedLessons:
-      typeof entry.completedLessons === "number" ? entry.completedLessons : 0,
-    completedUnits:
-      typeof entry.completedUnits === "number" ? entry.completedUnits : 0,
-    // Keep backward-compatible fields used in older writers/readers
-    score:
-      typeof entry.score === "number"
-        ? entry.score
-        : typeof entry.totalScore === "number"
-        ? entry.totalScore
-        : 0,
-    updatedAt: entry.updatedAt || serverTimestamp(),
-    lastUpdated: serverTimestamp(),
-    lastActive: entry.lastActive || serverTimestamp(),
-  };
-  await setDoc(ref, payload, { merge: true });
-  return payload;
 }
 
-// Helper: recalculate user's totalXP from individual scores + lessons
 export async function recalculateUserXP(uid, opts = { lessonXP: 20 }) {
   if (!uid) throw new Error("uid required");
 
-  // Sum all game scores (assumed 0-100) as XP, and add lesson XP per completed lesson.
-  const scores = await getUserScores(uid);
-  let gameXP = 0;
-  Object.values(scores || {}).forEach((s) => {
-    // if overall doc exists, skip; we only sum individual games with gameId keys
-    if (s && typeof s.score === "number")
-      gameXP += Math.max(0, Math.min(100, s.score));
-  });
-
-  // Count lessons
-  const lessonsColl = collection(db, "users", uid, "lessons");
-  const lessonsSnap = await getDocs(lessonsColl);
-  let lessonCount = 0;
-  lessonsSnap.forEach((d) => {
-    const data = d.data();
-    if (data?.completed) lessonCount++;
-  });
-
-  const lessonXP = lessonCount * (opts.lessonXP || 20);
-
-  const totalXP = Math.round(gameXP + lessonXP);
-
-  // Update overall scores doc and public leaderboard
-  const scoresRef = doc(db, "users", uid, "scores", "overall");
-  const leaderboardRef = doc(db, "leaderboard", uid);
-
-  const now = serverTimestamp();
-
-  await setDoc(
-    scoresRef,
-    {
-      totalXP,
-      totalScore: totalXP, // legacy compatibility
-      updatedAt: now,
-    },
-    { merge: true }
-  );
-
-  // Ensure leaderboard doc includes a display name / photo if available.
   try {
-    const profile = await getUserProfile(uid);
-    await setDoc(
-      leaderboardRef,
-      {
-        userId: uid,
-        name: profile?.name || profile?.fullName || "مستخدم",
-        photoURL: profile?.photoURL || null,
-        totalXP,
-        totalScore: totalXP,
-        lastUpdated: now,
-        lastActive: now,
-      },
-      { merge: true }
-    );
-  } catch (err) {
-    // Fall back to writing without profile fields if the profile read failed
-    await setDoc(
-      leaderboardRef,
-      {
-        userId: uid,
-        totalXP,
-        totalScore: totalXP,
-        lastUpdated: now,
-        lastActive: now,
-      },
-      { merge: true }
-    );
-  }
+    let gameXP = 0;
+    let completedGames = 0;
 
-  return totalXP;
+    try {
+      const scores = await getUserScores(uid);
+      Object.values(scores || {}).forEach((s) => {
+        if (s && typeof s.score === "number") {
+          gameXP += Math.max(0, Math.min(100, s.score));
+          if (s.completed) completedGames++;
+        }
+      });
+    } catch (err) {
+      console.warn("Error calculating game XP:", err);
+    }
+
+    let lessonCount = 0;
+    const completedUnitSet = new Set();
+
+    try {
+      const lessonsColl = collection(db, "users", uid, "lessons");
+      const lessonsSnap = await safeGetDocs(lessonsColl, "get lessons");
+      if (lessonsSnap) {
+        lessonsSnap.forEach((d) => {
+          const data = d.data ? d.data() : d;
+          if (data?.completed) {
+            lessonCount++;
+            if (data.unitId !== undefined && data.unitId !== null) {
+              completedUnitSet.add(String(data.unitId));
+            }
+          }
+        });
+      }
+    } catch (err) {
+      console.warn("Error counting lessons:", err);
+    }
+
+    const lessonXP = lessonCount * (opts.lessonXP || 20);
+    const totalXP = Math.round(gameXP + lessonXP);
+    const completedLessons = lessonCount;
+    const completedUnits = completedUnitSet.size;
+
+    const scoresRef = doc(db, "users", uid, "scores", "overall");
+    const leaderboardRef = doc(db, "leaderboard", uid);
+    const now = Date.now();
+
+    await safeSetDoc(
+      scoresRef,
+      {
+        totalXP,
+        totalScore: totalXP,
+        completedGames,
+        completedLessons,
+        completedUnits,
+        updatedAt: now,
+      },
+      "update overall scores"
+    );
+
+    try {
+      const profile = await getUserProfile(uid);
+      await safeSetDoc(
+        leaderboardRef,
+        {
+          userId: uid,
+          name: profile?.name || profile?.fullName || "مستخدم",
+          photoURL: profile?.photoURL || profile?.avatarURL || null,
+          avatarSeed: profile?.avatarSeed || null,
+          avatarURL: profile?.avatarURL || null,
+          totalXP,
+          totalScore: totalXP,
+          completedGames,
+          completedLessons,
+          completedUnits,
+          lastUpdated: now,
+          lastActive: now,
+        },
+        "update leaderboard"
+      );
+    } catch (err) {
+      await safeSetDoc(
+        leaderboardRef,
+        {
+          userId: uid,
+          totalXP,
+          totalScore: totalXP,
+          lastUpdated: now,
+          lastActive: now,
+        },
+        "update leaderboard fallback"
+      );
+    }
+
+    try {
+      await syncUserToLeaderboard(uid);
+    } catch (err) {
+      console.warn("syncUserToLeaderboard failed:", err);
+    }
+
+    return totalXP;
+  } catch (error) {
+    console.error("Error recalculating user XP:", error);
+    throw error;
+  }
+}
+
+export async function syncUserToLeaderboard(uid) {
+  if (!uid) throw new Error("uid required");
+
+  try {
+    const [profile, overall, scoresMap, lessonsMap, progress] =
+      await Promise.all([
+        getUserProfile(uid),
+        getUserOverall(uid),
+        getUserScores(uid),
+        getUserLessons(uid),
+        getUserProgress(uid),
+      ]);
+
+    const games = Object.values(scoresMap || {}).map((s) => ({
+      gameId: s.gameId || s.id || null,
+      score: typeof s.score === "number" ? s.score : null,
+      rawScore: typeof s.rawScore === "number" ? s.rawScore : null,
+      rawMax: typeof s.rawMax === "number" ? s.rawMax : null,
+      points: typeof s.points === "number" ? s.points : null,
+      completed: !!s.completed,
+      lastPlayed: s.lastPlayed || null,
+    }));
+
+    const completedLessons = Object.values(lessonsMap || {}).filter(
+      (l) => l.completed
+    ).length;
+
+    const payload = {
+      userId: uid,
+      name: profile?.name || profile?.fullName || "مستخدم",
+      photoURL: profile?.photoURL || profile?.avatarURL || null,
+      avatarSeed: profile?.avatarSeed || null,
+      avatarURL: profile?.avatarURL || null,
+      totalXP: overall?.totalXP ?? overall?.totalScore ?? 0,
+      totalScore: overall?.totalScore ?? overall?.totalXP ?? 0,
+      completedGames:
+        overall?.completedGames ?? games.filter((g) => g.completed).length,
+      completedLessons: overall?.completedLessons ?? completedLessons,
+      completedUnits: overall?.completedUnits ?? 0,
+      games,
+      progressSummary: {
+        totalProgress: progress?.totalProgress ?? null,
+        unlockedUnits: progress?.unlockedUnits ?? null,
+        lastUpdated: progress?.lastUpdated ?? null,
+      },
+      lastUpdated: Date.now(),
+      lastActive: Date.now(),
+    };
+
+    const leaderboardRef = doc(db, "leaderboard", uid);
+    await safeSetDoc(leaderboardRef, payload, "sync user to leaderboard");
+    return payload;
+  } catch (err) {
+    console.error("syncUserToLeaderboard failed for", uid, err?.message || err);
+    throw err;
+  }
 }
 
 export async function saveUserProgress(
@@ -272,91 +456,98 @@ export async function saveUserProgress(
 ) {
   if (!uid) throw new Error("uid required");
 
-  const userRef = doc(db, "users", uid);
-  const progressRef = doc(db, "users", uid, "progress", "main");
-  const scoresRef = doc(db, "users", uid, "scores", "overall");
-  const leaderboardRef = doc(db, "leaderboard", uid);
+  try {
+    const userRef = doc(db, "users", uid);
+    const progressRef = doc(db, "users", uid, "progress", "main");
+    const scoresRef = doc(db, "users", uid, "scores", "overall");
+    const leaderboardRef = doc(db, "leaderboard", uid);
 
-  const batch = writeBatch(db);
+    const batch = writeBatch(db);
 
-  // If caller did not supply a userProfile, try to read it so we can
-  // populate leaderboard name/photoURL reliably.
-  if (!userProfile) {
-    try {
-      const p = await getUserProfile(uid);
-      if (p) userProfile = p;
-    } catch (err) {
-      console.warn(
-        "saveUserProgress: could not read user profile",
-        uid,
-        err?.message || err
+    if (!userProfile) {
+      try {
+        const p = await getUserProfile(uid);
+        if (p) userProfile = p;
+      } catch (err) {
+        console.warn("Could not read user profile", uid, err?.message || err);
+      }
+    }
+
+    if (userProfile) {
+      batch.set(
+        userRef,
+        {
+          email: userProfile.email,
+          name: userProfile.name,
+          photoURL: userProfile.photoURL,
+          totalScore: totals?.totalScore,
+          totalProgress: totalProgress,
+          completedGames: totals?.completedGames,
+          completedLessons: totals?.completedLessons,
+          completedUnits: totals?.completedUnits,
+          lastUpdated: Date.now(),
+        },
+        { merge: true }
       );
     }
-  }
 
-  if (userProfile) {
     batch.set(
-      userRef,
+      progressRef,
       {
-        email: userProfile.email,
-        name: userProfile.name,
-        photoURL: userProfile.photoURL,
-        totalScore: totals?.totalScore,
+        progressData: progressData,
+        unlockedUnits: unlockedUnits,
         totalProgress: totalProgress,
-        completedGames: totals?.completedGames,
-        completedLessons: totals?.completedLessons,
-        completedUnits: totals?.completedUnits,
-        lastUpdated: serverTimestamp(),
+        lastUpdated: Date.now(),
       },
       { merge: true }
     );
+
+    batch.set(
+      scoresRef,
+      {
+        totalScore: totals?.totalScore,
+        completedGames: totals?.completedGames,
+        completedLessons: totals?.completedLessons,
+        completedUnits: totals?.completedUnits,
+        lastUpdated: Date.now(),
+      },
+      { merge: true }
+    );
+
+    batch.set(
+      leaderboardRef,
+      {
+        userId: uid,
+        name: userProfile?.name || userProfile?.fullName || "مستخدم",
+        photoURL: userProfile?.photoURL || userProfile?.avatarURL || null,
+        avatarSeed: userProfile?.avatarSeed || null,
+        avatarURL: userProfile?.avatarURL || null,
+        totalXP: totals?.totalXP ?? totals?.totalScore,
+        totalScore: totals?.totalScore,
+        score: typeof totals?.totalScore === "number" ? totals.totalScore : 0,
+        updatedAt: Date.now(),
+        completedGames: totals?.completedGames,
+        completedLessons: totals?.completedLessons,
+        completedUnits: totals?.completedUnits,
+        lastUpdated: Date.now(),
+        lastActive: Date.now(),
+      },
+      { merge: true }
+    );
+
+    await batch.commit();
+
+    try {
+      await syncUserToLeaderboard(uid);
+    } catch (err) {
+      console.warn("syncUserToLeaderboard failed:", err?.message || err);
+    }
+
+    return true;
+  } catch (error) {
+    console.error("Error saving user progress:", error);
+    throw error;
   }
-
-  batch.set(
-    progressRef,
-    {
-      progressData: progressData,
-      unlockedUnits: unlockedUnits,
-      totalProgress: totalProgress,
-      lastUpdated: serverTimestamp(),
-    },
-    { merge: true }
-  );
-
-  batch.set(
-    scoresRef,
-    {
-      totalScore: totals?.totalScore,
-      completedGames: totals?.completedGames,
-      completedLessons: totals?.completedLessons,
-      completedUnits: totals?.completedUnits,
-      lastUpdated: serverTimestamp(),
-    },
-    { merge: true }
-  );
-
-  // also update public leaderboard (use totalXP when available)
-  batch.set(
-    leaderboardRef,
-    {
-      userId: uid,
-      name: userProfile?.name || userProfile?.fullName || "مستخدم",
-      photoURL: userProfile?.photoURL || null,
-      totalXP: totals?.totalXP ?? totals?.totalScore,
-      totalScore: totals?.totalScore,
-      // legacy compatibility
-      score: typeof totals?.totalScore === "number" ? totals.totalScore : 0,
-      updatedAt: serverTimestamp(),
-      completedGames: totals?.completedGames,
-      completedLessons: totals?.completedLessons,
-      completedUnits: totals?.completedUnits,
-      lastUpdated: serverTimestamp(),
-      lastActive: serverTimestamp(),
-    },
-    { merge: true }
-  );
-
-  await batch.commit();
 }
 
 export async function saveGameScore(
@@ -366,229 +557,325 @@ export async function saveGameScore(
 ) {
   if (!uid || !gameId) throw new Error("uid and gameId required");
 
-  // Determine normalization:
-  // - If caller provided a rawMax (total possible points for the game), compute
-  //   normalized score = round((rawScore || score) / rawMax * 100).
-  // - Otherwise assume incoming `score` is already normalized to 0-100.
-  let normalized = 0;
-  const effectiveRaw =
-    typeof rawScore === "number"
-      ? rawScore
-      : typeof score === "number"
-      ? score
-      : 0;
-
-  if (typeof rawMax === "number" && rawMax > 0) {
-    normalized = Math.round((effectiveRaw / rawMax) * 100);
-  } else {
-    // clamp incoming score to 0-100
-    normalized = Math.max(0, Math.min(100, Math.round(score || 0)));
-  }
-
-  // Persist both raw and normalized values for auditing and potential reverse-calcs
-  const scoreRef = doc(db, "users", uid, "scores", gameId);
-  await setDoc(
-    scoreRef,
-    {
-      gameId,
-      unitId,
-      // store raw values when available
-      rawScore: typeof effectiveRaw === "number" ? effectiveRaw : null,
-      rawMax: typeof rawMax === "number" ? rawMax : null,
-      // canonical normalized score used by recalculateUserXP
-      score: normalized,
-      points: normalized,
-      completed,
-      lastPlayed: serverTimestamp(),
-    },
-    { merge: true }
-  );
-
-  // Recalculate the user's total XP after saving an individual game score
   try {
-    await recalculateUserXP(uid);
+    let normalized = 0;
+    const effectiveRaw =
+      typeof rawScore === "number"
+        ? rawScore
+        : typeof score === "number"
+        ? score
+        : 0;
+
+    if (typeof rawMax === "number" && rawMax > 0) {
+      normalized = Math.round((effectiveRaw / rawMax) * 100);
+    } else {
+      normalized = Math.max(0, Math.min(100, Math.round(score || 0)));
+    }
+
+    const scoreRef = doc(db, "users", uid, "scores", gameId);
+    await safeSetDoc(
+      scoreRef,
+      {
+        gameId: gameId,
+        unitId: unitId,
+        rawScore: typeof effectiveRaw === "number" ? effectiveRaw : null,
+        rawMax: typeof rawMax === "number" ? rawMax : null,
+        // normalized score (0-100)
+        score: normalized,
+        // store provided points when available, else fallback to normalized
+        points: typeof points === "number" && points > 0 ? points : normalized,
+        completed: !!completed,
+        lastPlayed: Date.now(),
+      },
+      "save game score"
+    );
+
+    try {
+      await setLeaderboardEntry(uid, {
+        totalScore: normalized,
+        totalXP: normalized,
+        updatedAt: Date.now(),
+      });
+    } catch (err) {
+      console.warn(
+        "Could not write minimal leaderboard entry:",
+        err?.message || err
+      );
+    }
+
+    try {
+      await recalculateUserXP(uid);
+    } catch (err) {
+      console.error("Error recalculating user XP:", err);
+    }
+
+    return normalized;
+  } catch (error) {
+    console.error("Error saving game score:", error);
+    throw error;
+  }
+}
+
+export async function getUserOverall(uid) {
+  if (!uid) return null;
+  try {
+    const ref = doc(db, "users", uid, "scores", "overall");
+    const snap = await safeGetDoc(ref, "get user overall");
+    return snap && snap.exists() ? snap.data() : null;
   } catch (err) {
-    console.error("Error recalculating user XP:", err);
+    console.warn("getUserOverall failed for", uid, err?.message || err);
+    return null;
   }
 }
 
 export async function getUserScores(uid) {
-  const coll = collection(db, "users", uid, "scores");
-  const snap = await getDocs(coll);
-  const map = {};
-  snap.forEach((d) => {
-    const data = d.data();
-    map[data.gameId] = data;
-  });
-  return map;
+  try {
+    const coll = collection(db, "users", uid, "scores");
+    const snap = await safeGetDocs(coll, "get user scores");
+    if (!snap) return {};
+
+    const map = {};
+    snap.forEach((d) => {
+      const data = d.data ? d.data() : d;
+      // Normalize returned object so callers can always rely on .gameId
+      const gameId = data?.gameId || d.id;
+      if (data) map[gameId] = { gameId, ...data };
+    });
+    return map;
+  } catch (error) {
+    console.error("Error getting user scores:", error);
+    return {};
+  }
 }
 
 export async function getUserLessons(uid) {
-  const coll = collection(db, "users", uid, "lessons");
-  const snap = await getDocs(coll);
-  const map = {};
-  snap.forEach((d) => {
-    const data = d.data();
-    if (data?.lessonId) map[data.lessonId] = data;
-  });
-  return map;
+  try {
+    const coll = collection(db, "users", uid, "lessons");
+    const snap = await safeGetDocs(coll, "get user lessons");
+    if (!snap) return {};
+
+    const map = {};
+    snap.forEach((d) => {
+      const data = d.data ? d.data() : d;
+      if (data?.lessonId) map[data.lessonId] = data;
+      else if (d.id) map[d.id] = data;
+    });
+    return map;
+  } catch (error) {
+    console.error("Error getting user lessons:", error);
+    return {};
+  }
 }
 
-// Save a lesson completion entry (centralized) and recalculate user XP
 export async function saveLessonCompletion(
   uid,
   lessonId,
   { unitId = 0, completed = true } = {}
 ) {
   if (!uid || !lessonId) throw new Error("uid and lessonId required");
-  const lessonRef = doc(db, "users", uid, "lessons", lessonId);
-  await setDoc(
-    lessonRef,
-    {
-      lessonId,
-      unitId,
-      completed,
-      lastUpdated: serverTimestamp(),
-    },
-    { merge: true }
-  );
+
   try {
-    await recalculateUserXP(uid);
-  } catch (err) {
-    console.error("Error recalculating user XP after lesson save:", err);
+    const lessonRef = doc(db, "users", uid, "lessons", lessonId);
+    await safeSetDoc(
+      lessonRef,
+      {
+        lessonId,
+        unitId,
+        completed,
+        lastUpdated: Date.now(),
+      },
+      "save lesson completion"
+    );
+
+    try {
+      await recalculateUserXP(uid);
+    } catch (err) {
+      console.error("Error recalculating user XP after lesson save:", err);
+    }
+
+    return true;
+  } catch (error) {
+    console.error("Error saving lesson completion:", error);
+    throw error;
   }
 }
 
-// Reset user progress: zero out scores and lesson completions and reset overall totals
 export async function resetUserProgress(uid) {
   if (!uid) throw new Error("uid required");
-  const scoresColl = collection(db, "users", uid, "scores");
-  const lessonsColl = collection(db, "users", uid, "lessons");
-  const scoresSnap = await getDocs(scoresColl);
-  const lessonsSnap = await getDocs(lessonsColl);
 
-  const batch = writeBatch(db);
+  try {
+    console.log("🔄 Resetting progress for user:", uid);
 
-  scoresSnap.forEach((d) => {
-    const ref = d.ref;
-    batch.set(
-      ref,
+    const scoresColl = collection(db, "users", uid, "scores");
+    const lessonsColl = collection(db, "users", uid, "lessons");
+
+    try {
+      const scoresSnap = await safeGetDocs(scoresColl, "get scores for reset");
+      if (scoresSnap) {
+        for (const d of scoresSnap.docs) {
+          if (d.id !== "overall") {
+            await safeSetDoc(
+              d.ref,
+              { score: 0, points: 0, completed: false, lastPlayed: Date.now() },
+              "reset game score"
+            );
+          }
+        }
+      }
+    } catch (error) {
+      console.warn("Error resetting game scores:", error);
+    }
+
+    try {
+      const lessonsSnap = await safeGetDocs(
+        lessonsColl,
+        "get lessons for reset"
+      );
+      if (lessonsSnap) {
+        for (const d of lessonsSnap.docs) {
+          await safeSetDoc(
+            d.ref,
+            { completed: false, lastUpdated: Date.now() },
+            "reset lesson"
+          );
+        }
+      }
+    } catch (error) {
+      console.warn("Error resetting lessons:", error);
+    }
+
+    const scoresRef = doc(db, "users", uid, "scores", "overall");
+    await safeSetDoc(
+      scoresRef,
       {
+        totalScore: 0,
+        totalXP: 0,
+        completedGames: 0,
+        completedLessons: 0,
+        completedUnits: 0,
+        lastUpdated: Date.now(),
+      },
+      "reset overall scores"
+    );
+
+    const progressRef = doc(db, "users", uid, "progress", "main");
+    await safeSetDoc(
+      progressRef,
+      {
+        progressData: [],
+        unlockedUnits: [0],
+        totalProgress: 0,
+        lastUpdated: Date.now(),
+      },
+      "reset progress"
+    );
+
+    const leaderboardRef = doc(db, "leaderboard", uid);
+    await safeSetDoc(
+      leaderboardRef,
+      {
+        totalScore: 0,
+        totalXP: 0,
         score: 0,
-        points: 0,
-        completed: false,
-        lastPlayed: serverTimestamp(),
+        completedGames: 0,
+        completedLessons: 0,
+        completedUnits: 0,
+        lastUpdated: Date.now(),
       },
-      { merge: true }
+      "reset leaderboard"
     );
-  });
 
-  lessonsSnap.forEach((d) => {
-    const ref = d.ref;
-    batch.set(
-      ref,
-      {
-        completed: false,
-        lastUpdated: serverTimestamp(),
-      },
-      { merge: true }
-    );
-  });
-
-  // reset overall scores doc and leaderboard entry
-  const scoresRef = doc(db, "users", uid, "scores", "overall");
-  const leaderboardRef = doc(db, "leaderboard", uid);
-
-  batch.set(
-    scoresRef,
-    {
-      totalScore: 0,
-      totalXP: 0,
-      completedGames: 0,
-      completedLessons: 0,
-      completedUnits: 0,
-      lastUpdated: serverTimestamp(),
-    },
-    { merge: true }
-  );
-
-  batch.set(
-    leaderboardRef,
-    {
-      totalScore: 0,
-      totalXP: 0,
-      score: 0,
-      completedGames: 0,
-      completedLessons: 0,
-      completedUnits: 0,
-      lastUpdated: serverTimestamp(),
-    },
-    { merge: true }
-  );
-
-  await batch.commit();
+    console.log("✅ Progress reset successfully for user:", uid);
+    return true;
+  } catch (error) {
+    console.error("❌ Error resetting user progress:", error);
+    throw error;
+  }
 }
 
 export async function getUserProgress(uid) {
-  const ref = doc(db, "users", uid, "progress", "main");
-  const snap = await getDoc(ref);
-  return snap.exists() ? snap.data() : null;
+  try {
+    const ref = doc(db, "users", uid, "progress", "main");
+    const snap = await safeGetDoc(ref, "get user progress");
+    return snap && snap.exists() ? snap.data() : null;
+  } catch (error) {
+    console.error("Error getting user progress:", error);
+    return null;
+  }
 }
 
-// Per-game progress helpers (save/load minimal state so games can resume)
 export async function setGameProgress(uid, gameId, progress = {}) {
   if (!uid || !gameId) throw new Error("uid and gameId required");
-  const ref = doc(db, "users", uid, "games", gameId);
-  await setDoc(
-    ref,
-    {
-      ...progress,
-      updatedAt: serverTimestamp(),
-    },
-    { merge: true }
-  );
-  return true;
+
+  try {
+    const ref = doc(db, "users", uid, "games", gameId);
+    await safeSetDoc(
+      ref,
+      { ...progress, updatedAt: Date.now() },
+      "set game progress"
+    );
+    return true;
+  } catch (error) {
+    console.error("Error setting game progress:", error);
+    throw error;
+  }
 }
 
 export async function getGameProgress(uid, gameId) {
   if (!uid || !gameId) return null;
-  const ref = doc(db, "users", uid, "games", gameId);
-  const snap = await getDoc(ref);
-  return snap && snap.exists() ? snap.data() : null;
+
+  try {
+    const ref = doc(db, "users", uid, "games", gameId);
+    const snap = await safeGetDoc(ref, "get game progress");
+    return snap && snap.exists() ? snap.data() : null;
+  } catch (error) {
+    console.error("Error getting game progress:", error);
+    return null;
+  }
 }
 
 export async function ensureUserInitialized(uid, profile = {}) {
   if (!uid) throw new Error("uid required");
-  const userRef = doc(db, "users", uid);
-  const snap = await getDoc(userRef);
-  if (!snap.exists()) {
-    await setDoc(
-      userRef,
-      {
-        email: profile.email || "",
-        name: profile.name || profile.fullName || "ضيف جديد",
-        photoURL: profile.photoURL || null,
-        createdAt: serverTimestamp(),
-        lastLogin: serverTimestamp(),
-      },
-      { merge: true }
-    );
+
+  try {
+    const userRef = doc(db, "users", uid);
+    const snap = await safeGetDoc(userRef, "check user initialization");
+
+    if (!snap || !snap.exists()) {
+      await safeSetDoc(
+        userRef,
+        {
+          email: profile.email || "",
+          name: profile.name || profile.fullName || "ضيف جديد",
+          photoURL: profile.photoURL || null,
+          createdAt: Date.now(),
+          lastLogin: Date.now(),
+        },
+        "initialize user"
+      );
+    }
+    return true;
+  } catch (error) {
+    console.error("Error ensuring user initialization:", error);
+    throw error;
   }
 }
 
-// Small helper to update arbitrary fields on the top-level user document.
-// Centralizes usage of setDoc so callers don't import Firestore primitives.
 export async function updateUserFields(uid, fields = {}) {
   if (!uid) throw new Error("uid required");
-  const userRef = doc(db, "users", uid);
-  await setDoc(
-    userRef,
-    {
-      ...fields,
-      lastUpdated: serverTimestamp(),
-    },
-    { merge: true }
-  );
+
+  try {
+    const userRef = doc(db, "users", uid);
+    await safeSetDoc(
+      userRef,
+      { ...fields, lastUpdated: Date.now() },
+      "update user fields"
+    );
+    return true;
+  } catch (error) {
+    console.error("Error updating user fields:", error);
+    throw error;
+  }
 }
 
 export default {
@@ -609,4 +896,6 @@ export default {
   setGameProgress,
   getGameProgress,
   getLeaderboardEntry,
+  getUserOverall,
+  syncUserToLeaderboard,
 };

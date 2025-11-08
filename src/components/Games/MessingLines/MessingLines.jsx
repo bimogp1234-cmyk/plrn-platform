@@ -6,7 +6,7 @@ import { Brightness4, VolumeUp, VolumeOff } from "@mui/icons-material";
 import { useLocation, useNavigate } from "react-router-dom";
 
 // Firestore service
-import { saveGameScore } from "./../../../FireBaseDatabase/firestoreService";
+import { saveGameScore } from "../../Departments/ComputerDep/progressService";
 
 // الأصوات
 const correctSound = new Audio("/sound/correct.mp3");

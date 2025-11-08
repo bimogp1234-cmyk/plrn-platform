@@ -1,4 +1,7 @@
-import { ensureUserInitialized, updateUserFields } from "./firestoreService";
+import {
+  ensureUserInitialized,
+  updateUserFields,
+} from "../components/Departments/ComputerDep/progressService";
 
 /**
  * Backwards-compatible helper to save a user. Delegates to the centralized
@@ -21,6 +24,7 @@ export const saveUserToFirestore = async (user, data) => {
     uid: user.uid,
     email: data?.email || user.email,
     ...data,
-    createdAt: new Date().toISOString(),
+    // prefer numeric epoch timestamps for consistency with server rules
+    createdAt: Date.now(),
   });
 };

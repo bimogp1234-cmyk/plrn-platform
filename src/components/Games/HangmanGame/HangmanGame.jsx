@@ -18,7 +18,7 @@ import "./HangmanGame.css";
 import {
   getGameProgress,
   setGameProgress,
-} from "../../../FireBaseDatabase/firestoreService";
+} from "../../Departments/ComputerDep/progressService";
 import { useAuth } from "../../../contexts/AuthContext";
 
 const QUIZ = [

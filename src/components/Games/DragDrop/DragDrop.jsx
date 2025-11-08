@@ -14,10 +14,10 @@ import "@fontsource/tajawal";
 
 // Firestore service
 import {
-  saveGameScore,
   getGameProgress,
   setGameProgress,
-} from "./../../../FireBaseDatabase/firestoreService";
+} from "../../Departments/ComputerDep/progressService";
+import { saveGameScore } from "../../Departments/ComputerDep/progressService";
 import {
   DEFAULT_PER_PLACEMENT_POINTS,
   computeRawMaxFromQuestions,
