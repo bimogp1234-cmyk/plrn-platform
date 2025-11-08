@@ -9,16 +9,21 @@ import {
   Gamepad,
 } from "@mui/icons-material";
 import Leaderboard from "./../LeaderboardComp/Leaderboard";
+import { useTheme as useAppTheme } from "../../../contexts/ThemeContext";
+function ProgressPanel(props) {
+  const {
+    progressData,
+    isMobile,
+    isUnitUnlocked,
+    resetProgress,
+    darkMode: propDarkMode,
+    userData,
+    userScore,
+  } = props;
 
-function ProgressPanel({
-  progressData,
-  isMobile,
-  isUnitUnlocked,
-  resetProgress,
-  darkMode,
-  userData,
-  userScore,
-}) {
+  const { theme } = useAppTheme();
+  const darkMode =
+    typeof propDarkMode === "boolean" ? propDarkMode : theme === "dark";
   return (
     <div className={`space-y-4 sm:space-y-6`}>
       <div

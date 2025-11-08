@@ -1,7 +1,12 @@
 // MainComDep.jsx - FIXED FIREBASE PERMISSIONS
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { Avatar, Button, useMediaQuery, useTheme } from "@mui/material";
+import {
+  Avatar,
+  Button,
+  useMediaQuery,
+  useTheme as useMuiTheme,
+} from "@mui/material";
 import {
   ArrowBack,
   Gamepad,
@@ -28,25 +33,46 @@ import {
   getUserOverall,
   onUserScoresChange,
   onUserLessonsChange,
+  onUserProgressChange,
+  updateProgressFields,
 } from "./progressService";
 import { useAuth } from "../../../contexts/AuthContext";
+import { useUserData } from "../../../contexts/UserDataContext";
+import { useTheme as useAppTheme } from "../../../contexts/ThemeContext";
 import { db } from "../../../FireBaseDatabase/firebase";
 
 export default function MainComDep() {
   const location = useLocation();
   const navigate = useNavigate();
-  const theme = useTheme();
+  const muiTheme = useMuiTheme();
+  const { theme: appTheme } = useAppTheme();
 
-  // Responsive breakpoints
-  const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
-  const isTablet = useMediaQuery(theme.breakpoints.between("sm", "lg"));
-  const isDesktop = useMediaQuery(theme.breakpoints.up("lg"));
+  // derive boolean darkMode from our app ThemeContext
+  const darkMode = appTheme === "dark";
 
-  // 🟩 Get user data from router or localStorage
-  const { userData: passedUserData, darkMode } = location.state || {};
+  // Responsive breakpoints (use MUI theme for breakpoints)
+  const isMobile = useMediaQuery(muiTheme.breakpoints.down("sm"));
+  const isTablet = useMediaQuery(muiTheme.breakpoints.between("sm", "lg"));
+  const isDesktop = useMediaQuery(muiTheme.breakpoints.up("lg"));
+
+  // 🟩 Get user data from router, context, or localStorage
+  const { userData: passedUserData } = location.state || {};
   const storedUserData = localStorage.getItem("userData");
+  const {
+    user: contextUser,
+    profile: contextProfile,
+    overall: ctxOverall,
+    progress: ctxProgress,
+    scores: ctxScores,
+  } = useUserData();
+
   const userData =
-    passedUserData || (storedUserData ? JSON.parse(storedUserData) : null);
+    passedUserData ||
+    (contextProfile
+      ? { ...(contextProfile || {}), uid: contextUser?.uid }
+      : storedUserData
+      ? JSON.parse(storedUserData)
+      : null);
 
   const { user: authUser, loading: authLoading } = useAuth();
 
@@ -442,6 +468,31 @@ export default function MainComDep() {
   const calculateTotalUserScore = useCallback((progressData) => {
     return progressData.reduce((sum, unit) => sum + (unit.totalScore || 0), 0);
   }, []);
+
+  // Display values prefer live DB/context values when available
+  const displayedTotalProgress =
+    ctxProgress && typeof ctxProgress.totalProgress === "number"
+      ? ctxProgress.totalProgress
+      : getTotalProgress();
+
+  const displayedUserScore =
+    (ctxOverall && (ctxOverall.totalScore ?? ctxOverall.totalXP)) || userScore;
+
+  const displayedCompletedGames =
+    ctxOverall && typeof ctxOverall.completedGames === "number"
+      ? ctxOverall.completedGames
+      : progressData.reduce(
+          (count, unit) => count + (unit.completedGames || 0),
+          0
+        );
+
+  const displayedCompletedLessons =
+    ctxOverall && typeof ctxOverall.completedLessons === "number"
+      ? ctxOverall.completedLessons
+      : progressData.reduce(
+          (count, unit) => count + (unit.completedLessons || 0),
+          0
+        );
 
   // 🎯 Save progress to Firebase with enhanced error handling
   const saveProgressToFirebase = useCallback(async () => {
@@ -962,6 +1013,41 @@ export default function MainComDep() {
     };
   }, [authUser, userData?.uid, recalculateAllProgress]);
 
+  // 🎯 REAL-TIME listener for saved progress document changes
+  useEffect(() => {
+    const effectiveUid = authUser?.uid || userData?.uid;
+    if (!effectiveUid || !authUser) return;
+
+    console.log(
+      "👂 Setting up real-time progress doc listener for user:",
+      effectiveUid
+    );
+
+    const unsubscribe = onUserProgressChange(effectiveUid, (remoteProgress) => {
+      try {
+        if (!remoteProgress) return;
+        console.log("🔄 Real-time user progress update:", remoteProgress);
+
+        const pd = remoteProgress.progressData || getInitialProgressData();
+        setProgressData(pd);
+        progressDataRef.current = pd;
+
+        setUnlockedUnits(remoteProgress.unlockedUnits || [0]);
+
+        // Recompute totals (best-effort). Recalculate to sync scores.
+        recalculateAllProgress().catch(console.error);
+      } catch (err) {
+        console.error("Error handling onUserProgressChange callback:", err);
+      }
+    });
+
+    return () => {
+      try {
+        if (typeof unsubscribe === "function") unsubscribe();
+      } catch (e) {}
+    };
+  }, [authUser, userData?.uid, recalculateAllProgress, getInitialProgressData]);
+
   // 🎯 Handle navigation
   const handleOpen = useCallback(
     (path, unitId = null, gameId = null, lessonId = null) => {
@@ -1027,6 +1113,69 @@ export default function MainComDep() {
       }
     }
   };
+
+  // 🎯 Decide which unit to show as the "current" unit:
+  // Prefer the first incomplete unit; if all completed, show the last unit.
+  const currentUnitId = useMemo(() => {
+    if (!progressData || progressData.length === 0) return 0;
+    const firstIncomplete = progressData.find((u) => !u.completed);
+    return typeof firstIncomplete?.id === "number"
+      ? firstIncomplete.id
+      : progressData[progressData.length - 1].id;
+  }, [progressData]);
+
+  const currentUnit = useMemo(() => {
+    return (
+      progressData.find((u) => u.id === currentUnitId) ||
+      (getInitialProgressData && getInitialProgressData()[0]) ||
+      null
+    );
+  }, [progressData, currentUnitId, getInitialProgressData]);
+
+  // UI: selected unit override and view-all toggle
+  const [showAllUnits, setShowAllUnits] = useState(false);
+  const [selectedUnitId, setSelectedUnitId] = useState(null);
+
+  // initialize selectedUnitId from context progress (if user had lastViewedUnit) or fallback
+  useEffect(() => {
+    const ctxLast = ctxProgress && ctxProgress.lastViewedUnit;
+    if (typeof ctxLast === "number") {
+      setSelectedUnitId(ctxLast);
+    } else {
+      setSelectedUnitId(currentUnitId);
+    }
+  }, [ctxProgress, currentUnitId]);
+
+  // Persist last viewed unit into the user's progress doc (debounced)
+  const persistTimeoutRef = useRef(null);
+  useEffect(() => {
+    const effectiveUid = authUser?.uid || userData?.uid;
+    if (!effectiveUid || selectedUnitId === null) return;
+
+    // debounce writes to avoid spamming Firestore when user rapidly switches
+    if (persistTimeoutRef.current) clearTimeout(persistTimeoutRef.current);
+    persistTimeoutRef.current = setTimeout(async () => {
+      try {
+        await updateProgressFields(effectiveUid, {
+          lastViewedUnit: selectedUnitId,
+        });
+        console.log(
+          "✅ Persisted lastViewedUnit to progress doc:",
+          selectedUnitId
+        );
+      } catch (err) {
+        console.warn("Could not persist lastViewedUnit:", err);
+      }
+      persistTimeoutRef.current = null;
+    }, 700);
+
+    return () => {
+      if (persistTimeoutRef.current) {
+        clearTimeout(persistTimeoutRef.current);
+        persistTimeoutRef.current = null;
+      }
+    };
+  }, [selectedUnitId, authUser, userData?.uid]);
 
   if (isLoading) {
     return (
@@ -1135,7 +1284,7 @@ export default function MainComDep() {
               isMobile ? "text-sm" : "text-base"
             }`}
           >
-            التقدم الكلي: {getTotalProgress()}%
+            التقدم الكلي: {displayedTotalProgress}%
           </div>
           <div
             className={`px-3 py-1 sm:px-4 sm:py-2 rounded-full ${
@@ -1144,7 +1293,7 @@ export default function MainComDep() {
               isMobile ? "text-sm" : "text-base"
             }`}
           >
-            النقاط: {userScore}
+            النقاط: {displayedUserScore}
           </div>
           <div
             className={`px-3 py-1 sm:px-4 sm:py-2 rounded-full ${
@@ -1153,11 +1302,7 @@ export default function MainComDep() {
               isMobile ? "text-sm" : "text-base"
             }`}
           >
-            الألعاب المكتملة:{" "}
-            {progressData.reduce(
-              (count, unit) => count + (unit.completedGames || 0),
-              0
-            )}
+            الألعاب المكتملة: {displayedCompletedGames}
           </div>
           <div
             className={`px-3 py-1 sm:px-4 sm:py-2 rounded-full ${
@@ -1166,11 +1311,7 @@ export default function MainComDep() {
               isMobile ? "text-sm" : "text-base"
             }`}
           >
-            الدروس المكتملة:{" "}
-            {progressData.reduce(
-              (count, unit) => count + (unit.completedLessons || 0),
-              0
-            )}
+            الدروس المكتملة: {displayedCompletedLessons}
           </div>
         </div>
       </div>
@@ -1181,24 +1322,11 @@ export default function MainComDep() {
           className={`text-sm ${darkMode ? "text-gray-300" : "text-gray-600"}`}
         >
           <summary>معلومات التصحيح (Debug)</summary>
-          <div className="mt-2 p-2 bg-black/20 rounded">
+          <div className="mt-4 p-2 bg-black/20 rounded">
             <p>الوحدات المفتوحة: {unlockedUnits.join(", ")}</p>
-            <p>إجمالي النقاط: {userScore}</p>
-            <p>
-              عدد الألعاب المكتملة:{" "}
-              {
-                Object.values(gameScores).filter((score) => score.completed)
-                  .length
-              }
-            </p>
-            <p>
-              عدد الدروس المكتملة:{" "}
-              {
-                Object.values(lessonCompletions).filter(
-                  (lesson) => lesson.completed
-                ).length
-              }
-            </p>
+            <p>إجمالي النقاط: {displayedUserScore}</p>
+            <p>عدد الألعاب المكتملة: {displayedCompletedGames}</p>
+            <p>عدد الدروس المكتملة: {displayedCompletedLessons}</p>
             <p>معرف المستخدم: {userData?.uid || "غير متوفر"}</p>
             {firebaseError && (
               <p className="text-red-500">خطأ: {firebaseError}</p>
@@ -1334,233 +1462,326 @@ export default function MainComDep() {
         <div
           className={`space-y-4 sm:space-y-6 ${isDesktop ? "w-2/3" : "w-full"}`}
         >
-          {/* Units Section */}
-          {progressData.map((unit) => {
-            const unitDef = units.find((u) => u.id === unit.id) || {};
+          {/* Units Section - show either the selected/current unit or all units */}
+          {(() => {
+            const unitsToShow = showAllUnits
+              ? progressData
+              : [
+                  progressData.find(
+                    (u) => u.id === (selectedUnitId ?? currentUnitId)
+                  ) || currentUnit,
+                ].filter(Boolean);
+
             return (
-              <div key={unit.id} className="space-y-4">
-                {/* Unit Header */}
-                <div
-                  className={`rounded-2xl p-4 sm:p-6 shadow-lg ${
-                    darkMode ? "bg-gray-800/60" : "bg-white"
-                  } ${!isUnitUnlocked(unit.id) ? "opacity-60" : ""}`}
-                >
-                  <div
-                    className={`flex items-center justify-between mb-4 sm:mb-6 ${
-                      isMobile ? "flex-col gap-2 items-start" : ""
-                    }`}
-                  >
-                    <h2
-                      className={`font-bold text-green-400 ${
-                        isMobile ? "text-xl" : "text-2xl"
-                      }`}
+              <div>
+                {/* Unit controls */}
+                <div className="mb-4 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size={isMobile ? "small" : "medium"}
+                      variant="outlined"
+                      onClick={() => {
+                        setShowAllUnits(false);
+                        const idx = progressData.findIndex(
+                          (u) => u.id === (selectedUnitId ?? currentUnitId)
+                        );
+                        if (idx > 0) {
+                          const prev = progressData[idx - 1];
+                          setSelectedUnitId(prev.id);
+                        }
+                      }}
                     >
-                      {unit.label}
-                    </h2>
-                    <div className="flex items-center space-x-2">
-                      {!isUnitUnlocked(unit.id) && (
-                        <Lock className="text-red-500" />
-                      )}
-                      <span
-                        className={`px-3 py-1 rounded-full bg-green-500/20 text-green-600 dark:text-green-400 ${
-                          isMobile ? "text-sm" : "text-base"
-                        }`}
-                      >
-                        {unit.percentage}% مكتمل
-                      </span>
-                    </div>
+                      السابق
+                    </Button>
+                    <Button
+                      size={isMobile ? "small" : "medium"}
+                      variant="outlined"
+                      onClick={() => {
+                        setShowAllUnits(false);
+                        const idx = progressData.findIndex(
+                          (u) => u.id === (selectedUnitId ?? currentUnitId)
+                        );
+                        if (idx < progressData.length - 1) {
+                          const next = progressData[idx + 1];
+                          setSelectedUnitId(next.id);
+                        }
+                      }}
+                    >
+                      التالي
+                    </Button>
+                    <Button
+                      size={isMobile ? "small" : "medium"}
+                      variant={showAllUnits ? "contained" : "outlined"}
+                      onClick={() => setShowAllUnits((s) => !s)}
+                    >
+                      {showAllUnits ? "عرض مركّز" : "عرض جميع الوحدات"}
+                    </Button>
                   </div>
+                  <div>
+                    <select
+                      value={selectedUnitId ?? currentUnitId}
+                      onChange={(e) => {
+                        const id = Number(e.target.value);
+                        setShowAllUnits(false);
+                        setSelectedUnitId(id);
+                      }}
+                      className="px-3 py-1 rounded border"
+                    >
+                      {progressData.map((u) => (
+                        <option key={u.id} value={u.id}>
+                          {`الوحدة ${u.id + 1} - ${
+                            units.find((x) => x.id === u.id)?.label
+                          }`}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
 
-                  {/* Lessons for this unit */}
-                  {getLessonsByUnit(unit.id).length > 0 && (
-                    <div className="mb-6 sm:mb-8">
-                      <h3
-                        className={`font-bold mb-4 sm:mb-6 text-green-400 text-center ${
-                          isMobile ? "text-xl" : "text-2xl"
-                        }`}
-                      >
-                        🧩 الدروس التفاعلية (
-                        {Math.round(
-                          (units.find((u) => u.id === unit.id)?.lessonWeight ||
-                            0.4) * 100
-                        )}{" "}
-                        نقطة)
-                      </h3>
-                      <div
-                        className={`grid gap-4 sm:gap-6 ${getGridClasses(
-                          getLessonsByUnit(unit.id).length
-                        )}`}
-                      >
-                        {getLessonsByUnit(unit.id).map(
-                          (lesson, lessonIndex) => {
-                            const isCompleted = isLessonCompleted(lesson.id);
-                            const isUnlocked = isUnitUnlocked(unit.id);
-
-                            return (
-                              <div
-                                key={lessonIndex}
-                                className={`relative rounded-2xl overflow-hidden shadow-lg transform transition-all duration-500 hover:scale-[1.05] cursor-pointer group ${
-                                  !isUnlocked
-                                    ? "opacity-50 cursor-not-allowed"
-                                    : ""
+                <div className="space-y-4">
+                  {unitsToShow.map((unit) => {
+                    const unitDef = units.find((u) => u.id === unit.id) || {};
+                    return (
+                      <div key={unit.id} className="space-y-4">
+                        <div
+                          className={`rounded-2xl p-4 sm:p-6 shadow-lg ${
+                            darkMode ? "bg-gray-800/60" : "bg-white"
+                          } ${!isUnitUnlocked(unit.id) ? "opacity-60" : ""}`}
+                        >
+                          <div
+                            className={`flex items-center justify-between mb-4 sm:mb-6 ${
+                              isMobile ? "flex-col gap-2 items-start" : ""
+                            }`}
+                          >
+                            <h2
+                              className={`font-bold text-green-400 ${
+                                isMobile ? "text-xl" : "text-2xl"
+                              }`}
+                            >
+                              {unitDef.label}
+                            </h2>
+                            <div className="flex items-center space-x-2">
+                              {!isUnitUnlocked(unit.id) && (
+                                <Lock className="text-red-500" />
+                              )}
+                              <span
+                                className={`px-3 py-1 rounded-full bg-green-500/20 text-green-600 dark:text-green-400 ${
+                                  isMobile ? "text-sm" : "text-base"
                                 }`}
-                                onClick={() => {
-                                  if (isUnlocked) {
-                                    markLessonCompleted(lesson.id, unit.id);
-                                    handleOpen(
-                                      `lesson-${unit.id}-${lessonIndex}`,
-                                      unit.id,
-                                      null,
+                              >
+                                {unit.percentage}% مكتمل
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Lessons for this unit */}
+                          {getLessonsByUnit(unit.id).length > 0 && (
+                            <div className="mb-6 sm:mb-8">
+                              <h3
+                                className={`font-bold mb-4 sm:mb-6 text-green-400 text-center ${
+                                  isMobile ? "text-xl" : "text-2xl"
+                                }`}
+                              >
+                                🧩 الدروس التفاعلية (
+                                {Math.round(
+                                  (unitDef.lessonWeight || 0.4) * 100
+                                )}{" "}
+                                نقطة)
+                              </h3>
+                              <div
+                                className={`grid gap-4 sm:gap-6 ${getGridClasses(
+                                  getLessonsByUnit(unit.id).length
+                                )}`}
+                              >
+                                {getLessonsByUnit(unit.id).map(
+                                  (lesson, lessonIndex) => {
+                                    const isCompleted = isLessonCompleted(
                                       lesson.id
                                     );
+                                    const isUnlocked = isUnitUnlocked(unit.id);
+
+                                    return (
+                                      <div
+                                        key={lessonIndex}
+                                        className={`relative rounded-2xl overflow-hidden shadow-lg transform transition-all duration-500 hover:scale-[1.05] cursor-pointer group ${
+                                          !isUnlocked
+                                            ? "opacity-50 cursor-not-allowed"
+                                            : ""
+                                        }`}
+                                        onClick={() => {
+                                          if (isUnlocked) {
+                                            markLessonCompleted(
+                                              lesson.id,
+                                              unit.id
+                                            );
+                                            handleOpen(
+                                              `lesson-${unit.id}-${lessonIndex}`,
+                                              unit.id,
+                                              null,
+                                              lesson.id
+                                            );
+                                          }
+                                        }}
+                                      >
+                                        <div
+                                          className={`absolute inset-0 scale-x-0 group-hover:scale-x-100 origin-left transition-transform duration-700 bg-gradient-to-br ${lesson.gradient}`}
+                                        ></div>
+
+                                        {isCompleted && (
+                                          <div className="absolute top-2 right-2 z-20">
+                                            <CheckCircle className="text-green-500 text-2xl bg-white rounded-full" />
+                                          </div>
+                                        )}
+
+                                        {!isUnlocked && (
+                                          <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-10">
+                                            <Lock className="text-white text-2xl sm:text-4xl" />
+                                          </div>
+                                        )}
+
+                                        <div className="relative z-10 flex flex-col items-center justify-center p-4 sm:p-6 text-center min-h-[120px] sm:min-h-[140px]">
+                                          <span className="text-2xl sm:text-3xl mb-2 sm:mb-3 transition-transform duration-500 group-hover:animate-bounce">
+                                            {lesson.emoji}
+                                          </span>
+                                          <span
+                                            className={`font-bold ${
+                                              isMobile ? "text-base" : "text-lg"
+                                            }`}
+                                          >
+                                            {lesson.title}
+                                          </span>
+                                          <p
+                                            className={`mt-2 opacity-75 ${
+                                              isMobile ? "text-xs" : "text-sm"
+                                            }`}
+                                          >
+                                            {lesson.description}
+                                          </p>
+                                          <div className="mt-2 text-xs text-gray-600 bg-white/70 px-2 py-1 rounded-full">
+                                            {isCompleted
+                                              ? "مكتمل"
+                                              : "انقر لبدء الدرس"}
+                                          </div>
+                                        </div>
+                                      </div>
+                                    );
                                   }
-                                }}
-                              >
-                                <div
-                                  className={`absolute inset-0 scale-x-0 group-hover:scale-x-100 origin-left transition-transform duration-700 bg-gradient-to-br ${lesson.gradient}`}
-                                ></div>
-
-                                {isCompleted && (
-                                  <div className="absolute top-2 right-2 z-20">
-                                    <CheckCircle className="text-green-500 text-2xl bg-white rounded-full" />
-                                  </div>
                                 )}
-
-                                {!isUnlocked && (
-                                  <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-10">
-                                    <Lock className="text-white text-2xl sm:text-4xl" />
-                                  </div>
-                                )}
-
-                                <div className="relative z-10 flex flex-col items-center justify-center p-4 sm:p-6 text-center min-h-[120px] sm:min-h-[140px]">
-                                  <span className="text-2xl sm:text-3xl mb-2 sm:mb-3 transition-transform duration-500 group-hover:animate-bounce">
-                                    {lesson.emoji}
-                                  </span>
-                                  <span
-                                    className={`font-bold ${
-                                      isMobile ? "text-base" : "text-lg"
-                                    }`}
-                                  >
-                                    {lesson.title}
-                                  </span>
-                                  <p
-                                    className={`mt-2 opacity-75 ${
-                                      isMobile ? "text-xs" : "text-sm"
-                                    }`}
-                                  >
-                                    {lesson.description}
-                                  </p>
-                                  <div className="mt-2 text-xs text-gray-600 bg-white/70 px-2 py-1 rounded-full">
-                                    {isCompleted ? "مكتمل" : "انقر لبدء الدرس"}
-                                  </div>
-                                </div>
-                              </div>
-                            );
-                          }
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Games for this unit */}
-                  {getGamesByUnit(unit.id).length > 0 && (
-                    <div>
-                      <h3
-                        className={`font-bold mb-4 sm:mb-6 text-purple-400 text-center ${
-                          isMobile ? "text-xl" : "text-2xl"
-                        }`}
-                      >
-                        🎮 الألعاب التعليمية (
-                        {Math.round(
-                          (units.find((u) => u.id === unit.id)?.gameWeight ||
-                            0.6) * 100
-                        )}{" "}
-                        نقطة)
-                      </h3>
-                      <div
-                        className={`grid gap-4 sm:gap-6 ${getGridClasses(
-                          getGamesByUnit(unit.id).length
-                        )}`}
-                      >
-                        {getGamesByUnit(unit.id).map((game, gameIndex) => {
-                          const isUnlocked = isUnitUnlocked(unit.id);
-                          const gameScore = getGameScore(game.gameId);
-                          const isCompleted = isGameCompleted(game.gameId);
-
-                          return (
-                            <div
-                              key={gameIndex}
-                              className={`relative rounded-2xl overflow-hidden shadow-lg transform transition-all duration-500 cursor-pointer group ${
-                                isUnlocked
-                                  ? "hover:scale-[1.05] hover:shadow-2xl"
-                                  : "opacity-60 cursor-not-allowed"
-                              }`}
-                              onClick={() =>
-                                isUnlocked &&
-                                handleOpen(game.path, unit.id, game.gameId)
-                              }
-                            >
-                              <div
-                                className={`absolute inset-y-0 left-0 w-0 group-hover:w-1/2 transition-all duration-700 bg-gradient-to-r ${game.gradientLeft}`}
-                              ></div>
-                              <div
-                                className={`absolute inset-y-0 right-0 w-0 group-hover:w-1/2 transition-all duration-700 bg-gradient-to-l ${game.gradientRight}`}
-                              ></div>
-
-                              {!isUnlocked && (
-                                <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-10">
-                                  <Lock className="text-white text-2xl sm:text-4xl" />
-                                </div>
-                              )}
-
-                              {isCompleted && (
-                                <div className="absolute top-2 right-2 z-20">
-                                  <CheckCircle className="text-green-500 text-2xl bg-white rounded-full" />
-                                </div>
-                              )}
-
-                              <div className="relative z-10 flex flex-col items-center justify-center p-4 sm:p-6 text-center text-black min-h-[160px] sm:min-h-[200px]">
-                                <span
-                                  className={`mb-3 sm:mb-4 transform group-hover:scale-110 transition-transform duration-300 ${
-                                    isMobile ? "text-2xl" : "text-4xl"
-                                  }`}
-                                >
-                                  {game.icon}
-                                </span>
-                                <h4
-                                  className={`font-bold mb-2 drop-shadow ${
-                                    isMobile ? "text-base" : "text-lg"
-                                  }`}
-                                >
-                                  {game.title}
-                                </h4>
-                                <p
-                                  className={`mb-3 opacity-90 drop-shadow ${
-                                    isMobile ? "text-xs" : "text-sm"
-                                  }`}
-                                >
-                                  {game.description}
-                                </p>
-                                <div className="flex justify-between w-full text-xs mt-auto">
-                                  <span className="px-2 py-1 rounded-full bg-white/70 backdrop-blur-sm text-black">
-                                    {game.level}
-                                  </span>
-                                  <span className="px-2 py-1 rounded-full bg-yellow-500/70 backdrop-blur-sm text-black">
-                                    {gameScore}/
-                                    {game.maxPoints || game.points || 100} نقطة
-                                  </span>
-                                </div>
                               </div>
                             </div>
-                          );
-                        })}
+                          )}
+
+                          {/* Games for this unit */}
+                          {getGamesByUnit(unit.id).length > 0 && (
+                            <div>
+                              <h3
+                                className={`font-bold mb-4 sm:mb-6 text-purple-400 text-center ${
+                                  isMobile ? "text-xl" : "text-2xl"
+                                }`}
+                              >
+                                🎮 الألعاب التعليمية (
+                                {Math.round((unitDef.gameWeight || 0.6) * 100)}{" "}
+                                نقطة)
+                              </h3>
+                              <div
+                                className={`grid gap-4 sm:gap-6 ${getGridClasses(
+                                  getGamesByUnit(unit.id).length
+                                )}`}
+                              >
+                                {getGamesByUnit(unit.id).map(
+                                  (game, gameIndex) => {
+                                    const isUnlocked = isUnitUnlocked(unit.id);
+                                    const gameScore = getGameScore(game.gameId);
+                                    const isCompleted = isGameCompleted(
+                                      game.gameId
+                                    );
+
+                                    return (
+                                      <div
+                                        key={gameIndex}
+                                        className={`relative rounded-2xl overflow-hidden shadow-lg transform transition-all duration-500 cursor-pointer group ${
+                                          isUnlocked
+                                            ? "hover:scale-[1.05] hover:shadow-2xl"
+                                            : "opacity-60 cursor-not-allowed"
+                                        }`}
+                                        onClick={() =>
+                                          isUnlocked &&
+                                          handleOpen(
+                                            game.path,
+                                            unit.id,
+                                            game.gameId
+                                          )
+                                        }
+                                      >
+                                        <div
+                                          className={`absolute inset-y-0 left-0 w-0 group-hover:w-1/2 transition-all duration-700 bg-gradient-to-r ${game.gradientLeft}`}
+                                        ></div>
+                                        <div
+                                          className={`absolute inset-y-0 right-0 w-0 group-hover:w-1/2 transition-all duration-700 bg-gradient-to-l ${game.gradientRight}`}
+                                        ></div>
+
+                                        {!isUnlocked && (
+                                          <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-10">
+                                            <Lock className="text-white text-2xl sm:text-4xl" />
+                                          </div>
+                                        )}
+
+                                        {isCompleted && (
+                                          <div className="absolute top-2 right-2 z-20">
+                                            <CheckCircle className="text-green-500 text-2xl bg-white rounded-full" />
+                                          </div>
+                                        )}
+
+                                        <div className="relative z-10 flex flex-col items-center justify-center p-4 sm:p-6 text-center text-black min-h-[160px] sm:min-h-[200px]">
+                                          <span
+                                            className={`mb-3 sm:mb-4 transform group-hover:scale-110 transition-transform duration-300 ${
+                                              isMobile ? "text-2xl" : "text-4xl"
+                                            }`}
+                                          >
+                                            {game.icon}
+                                          </span>
+                                          <h4
+                                            className={`font-bold mb-2 drop-shadow ${
+                                              isMobile ? "text-base" : "text-lg"
+                                            }`}
+                                          >
+                                            {game.title}
+                                          </h4>
+                                          <p
+                                            className={`mb-3 opacity-90 drop-shadow ${
+                                              isMobile ? "text-xs" : "text-sm"
+                                            }`}
+                                          >
+                                            {game.description}
+                                          </p>
+                                          <div className="flex justify-between w-full text-xs mt-auto">
+                                            <span className="px-2 py-1 rounded-full bg-white/70 backdrop-blur-sm text-black">
+                                              {game.level}
+                                            </span>
+                                            <span className="px-2 py-1 rounded-full bg-yellow-500/70 backdrop-blur-sm text-black">
+                                              {gameScore}/
+                                              {game.maxPoints ||
+                                                game.points ||
+                                                100}{" "}
+                                              نقطة
+                                            </span>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    );
+                                  }
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  )}
+                    );
+                  })}
                 </div>
               </div>
             );
-          })}
+          })()}
 
           {/* User Stats Card */}
           <div
@@ -1589,7 +1810,7 @@ export default function MainComDep() {
                     isMobile ? "text-xl" : "text-2xl"
                   }`}
                 >
-                  {getTotalProgress()}%
+                  {displayedTotalProgress}%
                 </div>
                 <div className={isMobile ? "text-xs" : "text-sm"}>
                   التقدم الكلي
@@ -1605,7 +1826,7 @@ export default function MainComDep() {
                     isMobile ? "text-xl" : "text-2xl"
                   }`}
                 >
-                  {userScore}
+                  {displayedUserScore}
                 </div>
                 <div className={isMobile ? "text-xs" : "text-sm"}>
                   النقاط الكلية
@@ -1637,10 +1858,7 @@ export default function MainComDep() {
                     isMobile ? "text-xl" : "text-2xl"
                   }`}
                 >
-                  {progressData.reduce(
-                    (count, unit) => count + (unit.completedGames || 0),
-                    0
-                  )}
+                  {displayedCompletedGames}
                 </div>
                 <div className={isMobile ? "text-xs" : "text-sm"}>
                   الألعاب المكتملة

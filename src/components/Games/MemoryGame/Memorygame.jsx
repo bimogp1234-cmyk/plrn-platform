@@ -10,6 +10,7 @@ import {
   Button,
 } from "@mui/material";
 import { Brightness4, ArrowBack } from "@mui/icons-material";
+import { useTheme } from "../../../contexts/ThemeContext";
 import "./Memorygame.css";
 import logoImg from "../../../assets/logo/logo.png";
 
@@ -24,7 +25,8 @@ const images = [
 ];
 
 export default function MemoryGame() {
-  const [darkMode, setDarkMode] = useState(true);
+  const { theme, toggleTheme } = useTheme();
+  const darkMode = theme === "dark";
   const [cards, setCards] = useState([]);
   const [flipped, setFlipped] = useState([]);
   const [matched, setMatched] = useState([]);
@@ -100,7 +102,8 @@ export default function MemoryGame() {
     }
   };
 
-  const toggleTheme = () => setDarkMode((prev) => !prev);
+  // uses global theme toggle
+  // const toggleTheme = () => setDarkMode((prev) => !prev);
 
   const handleCloseDialog = () => {
     setDialog((prev) => ({ ...prev, open: false }));

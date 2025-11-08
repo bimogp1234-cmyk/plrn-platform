@@ -1,6 +1,9 @@
 import { useState, useEffect } from "react";
 import logoImg from "../../assets/logo/logo.png";
 import { useNavigate } from "react-router-dom";
+import { signOut } from "firebase/auth";
+import { auth } from "../../FireBaseDatabase/firebase";
+import { useUserData } from "../../contexts/UserDataContext";
 
 export default function Navbar() {
   const [activeSection, setActiveSection] = useState("hero");
@@ -66,12 +69,53 @@ export default function Navbar() {
             </button>
           ))}
 
-          <button
-            onClick={() => navigate("/login")}
-            className="ml-6 px-6 py-2 rounded-full bg-gradient-to-r from-green-400 via-blue-400 to-green-300 text-white font-bold shadow-lg hover:shadow-xl transition-all"
-          >
-            تسجيل الدخول
-          </button>
+          {/* show user info when signed in, otherwise login button */}
+          {(() => {
+            try {
+              const ud = useUserData();
+              const current = ud?.user;
+              const overall = ud?.overall;
+              if (current) {
+                return (
+                  <div className="flex items-center gap-4">
+                    <div className="text-sm text-gray-700">
+                      <div className="font-semibold">
+                        {current.displayName || ud?.profile?.name || "مستخدم"}
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        {overall?.totalScore ?? overall?.totalXP ?? 0} نقاط
+                      </div>
+                    </div>
+                    <button
+                      onClick={async () => {
+                        try {
+                          await signOut(auth);
+                          navigate("/");
+                        } catch (err) {
+                          console.error("Sign out failed:", err);
+                          navigate("/");
+                        }
+                      }}
+                      className="ml-6 px-4 py-2 rounded-full bg-red-400 text-white font-bold shadow hover:shadow-md transition-all"
+                    >
+                      تسجيل الخروج
+                    </button>
+                  </div>
+                );
+              }
+            } catch (e) {
+              // if context not available (e.g., during very early render), fall back to login button
+            }
+
+            return (
+              <button
+                onClick={() => navigate("/login")}
+                className="ml-6 px-6 py-2 rounded-full bg-gradient-to-r from-green-400 via-blue-400 to-green-300 text-white font-bold shadow-lg hover:shadow-xl transition-all"
+              >
+                تسجيل الدخول
+              </button>
+            );
+          })()}
         </div>
 
         {/* Mobile Menu Button */}

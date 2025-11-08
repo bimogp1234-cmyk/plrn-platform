@@ -1,6 +1,9 @@
 import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
 //Contexts
 import { AuthProvider } from "./contexts/AuthContext";
+import { UserDataProvider } from "./contexts/UserDataContext";
+import { ThemeProvider } from "./contexts/ThemeContext";
+import ThemeToggle from "./components/ThemeToggle";
 import ProtectedRoute from "./components/Routes/ProtectedRoute";
 //Forms
 import LoginForm from "./components/login/LoginForm";
@@ -30,38 +33,46 @@ export default function App() {
   return (
     <div className="min-h-screen text-gray-900 relative">
       <AuthProvider>
-        <Router>
-          <Routes>
-            <Route path="/" element={<Main />} />
-            <Route path="/main" element={<Main />} />
-            <Route path="/login" element={<LoginForm />} />
-            <Route path="/register" element={<RegisterForm />} />
-            <Route path="/forget-password" element={<ForgetPassword />} />
-            <Route path="*" element={<NotFoundPage />} />
-            <Route path="maincomdep" element={<MainComDep />} />
-            <Route path="/lessons/:unitId/:lessonId" element={<LessonPage />} />
-            <Route path="/lesson" element={<LessonComponent />} />
-            <Route path="physicdep" element={<PhysicDep />} />
-            <Route path="mathdep" element={<MathDep />} />
-            <Route path="firstaid" element={<FirstAidDep />} />
-            <Route
-              path="/dashboard"
-              element={
-                <ProtectedRoute>
-                  <Dashboard />
-                </ProtectedRoute>
-              }
-            />
+        <UserDataProvider>
+          <ThemeProvider>
+            <Router>
+              <ThemeToggle />
+              <Routes>
+                <Route path="/" element={<Main />} />
+                <Route path="/main" element={<Main />} />
+                <Route path="/login" element={<LoginForm />} />
+                <Route path="/register" element={<RegisterForm />} />
+                <Route path="/forget-password" element={<ForgetPassword />} />
+                <Route path="*" element={<NotFoundPage />} />
+                <Route path="maincomdep" element={<MainComDep />} />
+                <Route
+                  path="/lessons/:unitId/:lessonId"
+                  element={<LessonPage />}
+                />
+                <Route path="/lesson" element={<LessonComponent />} />
+                <Route path="physicdep" element={<PhysicDep />} />
+                <Route path="mathdep" element={<MathDep />} />
+                <Route path="firstaid" element={<FirstAidDep />} />
+                <Route
+                  path="/dashboard"
+                  element={
+                    <ProtectedRoute>
+                      <Dashboard />
+                    </ProtectedRoute>
+                  }
+                />
 
-            <Route path="/dragDrop" element={<DragDrop />} />
-            <Route path="/messinglines" element={<MessingLines />} />
-            <Route path="/memorycard" element={<Memorygame />} />
-            <Route path="/realisticarena" element={<FPSGame />} />
-            <Route path="/adventuretime" element={<AdventureTimeGame />} />
-            {/* <Route path="/adventuretime" element={<Puzzle />} /> */}
-            <Route path="/hangmangame" element={<HangmanGame />} />
-          </Routes>
-        </Router>
+                <Route path="/dragDrop" element={<DragDrop />} />
+                <Route path="/messinglines" element={<MessingLines />} />
+                <Route path="/memorycard" element={<Memorygame />} />
+                <Route path="/realisticarena" element={<FPSGame />} />
+                <Route path="/adventuretime" element={<AdventureTimeGame />} />
+                {/* <Route path="/adventuretime" element={<Puzzle />} /> */}
+                <Route path="/hangmangame" element={<HangmanGame />} />
+              </Routes>
+            </Router>
+          </ThemeProvider>
+        </UserDataProvider>
       </AuthProvider>
     </div>
   );

@@ -18,7 +18,6 @@ import {
   Typography,
   Grid,
   useMediaQuery,
-  useTheme,
 } from "@mui/material";
 import {
   Brightness4,
@@ -56,6 +55,8 @@ import {
   setLeaderboardEntry,
   updateUserFields,
 } from "../Departments/ComputerDep/progressService";
+import { useTheme as useAppTheme } from "../../contexts/ThemeContext";
+import { useTheme as useMuiTheme } from "@mui/material";
 
 // ✅ Firestore Error Handler
 const handleFirestoreError = (error, showToast) => {
@@ -487,7 +488,8 @@ function ProfileEditModal({
 // -------------------------------
 export default function Dashboard() {
   // ----------------- UI / theme / basic states -----------------
-  const [darkMode, setDarkMode] = useState(false);
+  const { theme, toggleTheme } = useAppTheme();
+  const darkMode = theme === "dark";
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [toasts, setToasts] = useState([]);
@@ -496,10 +498,10 @@ export default function Dashboard() {
   const navigate = useNavigate();
 
   // ----------------- Responsive Breakpoints -----------------
-  const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down("md")); // < 768px
-  const isTablet = useMediaQuery(theme.breakpoints.between("md", "lg")); // 768px - 1024px
-  const isDesktop = useMediaQuery(theme.breakpoints.up("lg")); // > 1024px
+  const muiTheme = useMuiTheme();
+  const isMobile = useMediaQuery(muiTheme.breakpoints.down("md")); // < 768px
+  const isTablet = useMediaQuery(muiTheme.breakpoints.between("md", "lg")); // 768px - 1024px
+  const isDesktop = useMediaQuery(muiTheme.breakpoints.up("lg")); // > 1024px
 
   // ----------------- Firebase & user state -----------------
   const [fb, setFb] = useState({ auth, db });
@@ -810,7 +812,7 @@ export default function Dashboard() {
   };
 
   // ----------------- UI helpers -----------------
-  const toggleTheme = useCallback(() => setDarkMode((p) => !p), []);
+  // toggleTheme comes from ThemeContext and persists user choice
 
   // ----------------- Custom styles -----------------
   const customStyles = `

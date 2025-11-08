@@ -16,13 +16,14 @@ import "@fontsource/tajawal";
 import {
   getGameProgress,
   setGameProgress,
+  saveGameScore,
+  onGameProgressChange,
 } from "../../Departments/ComputerDep/progressService";
-import { saveGameScore } from "../../Departments/ComputerDep/progressService";
 import {
   DEFAULT_PER_PLACEMENT_POINTS,
   computeRawMaxFromQuestions,
 } from "./../../../config/gameConstants";
-import { getStoredTheme, setTheme } from "./../../../utils/theme";
+import { useTheme } from "../../../contexts/ThemeContext";
 import { useAuth } from "../../../contexts/AuthContext";
 
 // الأصوات
@@ -380,8 +381,7 @@ function Slot({
 export default function DragDrop() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { userData, darkMode, unitId, gameId, savedProgress } =
-    location.state || {};
+  const { userData, unitId, gameId, savedProgress } = location.state || {};
 
   // Prefer the authenticated user from context to avoid passing incorrect uids
   const { user: authUser } = useAuth ? useAuth() : { user: null };
@@ -392,8 +392,9 @@ export default function DragDrop() {
   const [savedProgressData, setSavedProgressData] = useState(null);
   const [loadedFromSave, setLoadedFromSave] = useState(false);
 
-  // theme override: reads persisted choice and allows toggle
-  const [localTheme, setLocalTheme] = useState(null); // 'dark' | 'light' | null (null = follow prop)
+  const { theme, toggleTheme } = useTheme();
+  const darkMode = theme === "dark";
+  // theme override no longer stored locally here; use ThemeContext instead
   const [placed, setPlaced] = useState({});
   const [lives, setLives] = useState(3);
   const [showLivesModal, setShowLivesModal] = useState(false);
@@ -544,9 +545,10 @@ export default function DragDrop() {
         }
 
         // 2. If user is logged in try Firestore saved progress (overrides local)
-        if (userData?.uid && gameId) {
+        const effectiveUid = authUser?.uid || userData?.uid;
+        if (effectiveUid && gameId) {
           try {
-            const remote = await getGameProgress(userData.uid, gameId);
+            const remote = await getGameProgress(effectiveUid, gameId);
             if (mounted && remote) {
               setSavedProgressData(remote);
               // Auto-apply remote progress (override local)
@@ -559,10 +561,7 @@ export default function DragDrop() {
           }
         }
 
-        // Load persisted theme preference
-        const persisted = getStoredTheme();
-        if (mounted && persisted)
-          setLocalTheme(persisted === "dark" ? "dark" : "light");
+        // Theme is managed by ThemeContext; no local theme load here.
       } catch (err) {
         console.warn("Failed to load saved progress:", err);
       }
@@ -578,8 +577,9 @@ export default function DragDrop() {
   const handleResetProgress = async () => {
     try {
       localStorage.removeItem(`game_progress_${gameId}`);
-      if (userData?.uid) {
-        await setGameProgress(userData.uid, gameId, {
+      const effectiveUid = authUser?.uid || userData?.uid;
+      if (effectiveUid) {
+        await setGameProgress(effectiveUid, gameId, {
           currentLevel: 0,
           score: 0,
           completed: false,
@@ -595,17 +595,40 @@ export default function DragDrop() {
     }
   };
 
-  // Theme toggle handler (persist locally and to user profile when available)
-  const toggleLocalTheme = async () => {
-    const next =
-      localTheme === "dark" || (!localTheme && darkMode) ? "light" : "dark";
-    setLocalTheme(next);
+  // Real-time subscription to per-game progress so UI stays in sync
+  useEffect(() => {
+    const effectiveUid = authUser?.uid || userData?.uid;
+    if (!effectiveUid || !gameId) return;
+
+    let unsub = null;
     try {
-      await setTheme(next, userData?.uid || null);
+      unsub = onGameProgressChange(effectiveUid, gameId, (remote) => {
+        try {
+          if (!remote) return;
+          // Only update if remote data is different from current
+          const newLevel = remote.currentLevel || 0;
+          const newScore = remote.score || 0;
+          setSavedProgressData(remote);
+          setCurrentLevel((prev) => (prev !== newLevel ? newLevel : prev));
+          setScore((prev) => (prev !== newScore ? newScore : prev));
+          setLoadedFromSave(true);
+        } catch (err) {
+          console.warn("onGameProgressChange handler error:", err);
+        }
+      });
     } catch (err) {
-      console.warn("Failed to persist theme", err);
+      console.warn("Failed to attach realtime game progress listener:", err);
     }
-  };
+
+    return () => {
+      try {
+        if (typeof unsub === "function") unsub();
+      } catch (e) {}
+    };
+  }, [authUser?.uid, userData?.uid, gameId]);
+
+  // Theme toggle uses global ThemeContext which handles persistence
+  const toggleLocalTheme = () => toggleTheme();
 
   const toggleMusic = () => {
     if (musicPlaying) {
@@ -779,9 +802,7 @@ export default function DragDrop() {
                 variant="outlined"
                 onClick={toggleLocalTheme}
               >
-                {localTheme === "dark" || (localTheme === null && darkMode)
-                  ? "وضع فاتح"
-                  : "وضع داكن"}
+                {theme === "dark" ? "وضع فاتح" : "وضع داكن"}
               </Button>
               <IconButton onClick={toggleMusic} color="inherit">
                 {musicPlaying ? <VolumeUp /> : <VolumeOff />}

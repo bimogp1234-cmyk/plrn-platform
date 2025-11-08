@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
+import { useTheme } from "../../../contexts/ThemeContext";
 import "@fontsource/tajawal";
 import {
   AppBar,
@@ -15,11 +16,8 @@ import { Brightness4, ArrowBack } from "@mui/icons-material";
 import "./HangmanGame.css";
 
 // Firestore helpers (optional remote resume when user is signed in)
-import {
-  getGameProgress,
-  setGameProgress,
-} from "../../Departments/ComputerDep/progressService";
-import { useAuth } from "../../../contexts/AuthContext";
+import * as progressService from "../../Departments/ComputerDep/progressService";
+import { useUserData } from "../../../contexts/UserDataContext";
 
 const QUIZ = [
   {
@@ -114,14 +112,15 @@ const Transition = React.forwardRef(function Transition(props, ref) {
 });
 
 export default function HangmanGame() {
-  const [darkMode, setDarkMode] = useState(true);
+  const { theme, toggleTheme } = useTheme();
+  const darkMode = theme === "dark";
   const [questionIndex, setQuestionIndex] = useState(0);
   const [wrongAttempts, setWrongAttempts] = useState(0);
   const [finished, setFinished] = useState(false);
   const [dialog, setDialog] = useState({ open: false, type: "", text: "" });
   const [disabledOptions, setDisabledOptions] = useState(false);
 
-  const { user } = useAuth ? useAuth() : { user: null };
+  const { user, setGameProgress: ctxSetGameProgress } = useUserData();
   const GAME_ID = "hangman";
 
   const successAudioRef = useRef(null);
@@ -145,7 +144,7 @@ export default function HangmanGame() {
     }
   };
 
-  const toggleTheme = () => setDarkMode((prev) => !prev);
+  // use global theme toggle
 
   // --- Auto-resume on mount: try localStorage, then (if signed in) remote Firestore ---
   useEffect(() => {
@@ -164,9 +163,10 @@ export default function HangmanGame() {
         }
 
         // 2) remote (overrides local) when user signed in
-        if (user?.uid) {
+        const uid = user?.uid;
+        if (uid) {
           try {
-            const remote = await getGameProgress(user.uid, GAME_ID);
+            const remote = await progressService.getGameProgress(uid, GAME_ID);
             if (mounted && remote) {
               setQuestionIndex(remote.currentLevel || 0);
               setWrongAttempts(remote.wrongAttempts || 0);
@@ -181,8 +181,30 @@ export default function HangmanGame() {
       }
     };
     load();
+    // subscribe to realtime per-game progress updates when signed in
+    let unsub = null;
+    try {
+      const uid = user?.uid;
+      if (uid) {
+        unsub = progressService.onGameProgressChange(uid, GAME_ID, (remote) => {
+          try {
+            if (!remote) return;
+            setQuestionIndex(remote.currentLevel || 0);
+            setWrongAttempts(remote.wrongAttempts || 0);
+            setFinished(Boolean(remote.finished));
+          } catch (e) {
+            console.error("Hangman realtime handler error:", e);
+          }
+        });
+      }
+    } catch (err) {
+      console.warn("Hangman: failed to attach realtime listener", err);
+    }
     return () => {
       mounted = false;
+      try {
+        if (typeof unsub === "function") unsub();
+      } catch (e) {}
     };
   }, [user]);
 
@@ -207,14 +229,16 @@ export default function HangmanGame() {
       const uid = user?.uid;
       if (!uid) {
         // Don't attempt remote saves if no authenticated user is available.
-        // This prevents "Missing or insufficient permissions" errors when
-        // an unauthenticated client tries to write to user-scoped documents.
         console.debug("Hangman: skipping remote save (no signed-in user)");
         return;
       }
 
       try {
-        await setGameProgress(uid, GAME_ID, payload);
+        if (typeof ctxSetGameProgress === "function") {
+          await ctxSetGameProgress(GAME_ID, payload);
+        } else {
+          await progressService.setGameProgress(uid, GAME_ID, payload);
+        }
       } catch (err) {
         // Surface helpful debug details so developers can quickly diagnose
         // permission-denied issues (uid mismatch, rules not deployed, etc.).

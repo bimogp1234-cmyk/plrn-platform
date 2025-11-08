@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { useTheme as useAppTheme } from "../../../../contexts/ThemeContext";
 import { ArrowBack, CheckCircle, School } from "@mui/icons-material";
 import {
   Button,
@@ -31,7 +32,13 @@ const lessonsMap = {
 export default function LessonComponent() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { userData, darkMode, unitId, lessonId } = location.state || {};
+  const locState = location.state || {};
+  const { userData, unitId, lessonId } = locState;
+  const { theme } = useAppTheme();
+  const darkMode =
+    typeof locState.darkMode === "boolean"
+      ? locState.darkMode
+      : theme === "dark";
 
   const unitNum = Number(unitId ?? 0);
   const lesson = lessonsMap[unitNum] ? lessonsMap[unitNum][lessonId] : null;

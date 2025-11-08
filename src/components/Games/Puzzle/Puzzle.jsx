@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { useTheme } from "../../../contexts/ThemeContext";
 import {
   Box,
   Card,
@@ -108,7 +109,9 @@ function Puzzle() {
     message: "",
     severity: "success",
   });
-  const [darkMode, setDarkMode] = useState(false);
+
+  const { theme, toggleTheme } = useTheme();
+  const darkMode = theme === "dark";
 
   const currentLevelData = levels[currentLevel];
 
@@ -189,12 +192,7 @@ function Puzzle() {
           🎮 محرر البرمجة التفاعلي
         </Typography>
         <FormControlLabel
-          control={
-            <Switch
-              checked={darkMode}
-              onChange={() => setDarkMode(!darkMode)}
-            />
-          }
+          control={<Switch checked={darkMode} onChange={toggleTheme} />}
           label="الوضع الليلي"
         />
       </Box>

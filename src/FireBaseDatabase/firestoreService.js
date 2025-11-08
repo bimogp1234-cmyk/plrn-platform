@@ -13,7 +13,7 @@ import {
   updateDoc,
   deleteDoc,
 } from "firebase/firestore";
-import { db } from "./firebase";
+import { db, auth } from "./firebase";
 
 /**
  * Firestore service: centralizes leaderboard, progress and score operations.
@@ -42,6 +42,13 @@ const safeGetDoc = async (docRef, operation = "get document") => {
   try {
     return await getDoc(docRef);
   } catch (error) {
+    // If the error is permission-related, surface a warning and return null
+    // so callers can proceed without noisy exceptions.
+    if (error && error.code === "permission-denied") {
+      console.warn(`${operation} - permission denied for doc`, docRef.path);
+      return null;
+    }
+
     handleFirestoreError(operation, error);
   }
 };
@@ -51,6 +58,11 @@ const safeSetDoc = async (docRef, data, operation = "set document") => {
     await setDoc(docRef, data, { merge: true });
     return true;
   } catch (error) {
+    if (error && error.code === "permission-denied") {
+      console.warn(`${operation} - permission denied writing doc`, docRef.path);
+      return false;
+    }
+
     handleFirestoreError(operation, error);
   }
 };
@@ -218,6 +230,25 @@ export async function getLeaderboardEntry(uid) {
 export async function getUserProfile(uid) {
   if (!uid) return null;
   try {
+    // Guard: avoid attempting to read another user's private profile from
+    // the client. Firestore rules restrict reads on `users/{uid}` to the
+    // authenticated owner. If the current client is not the owner, return
+    // null to let callers fall back to public leaderboard fields.
+    try {
+      const current = auth && auth.currentUser;
+      if (!current || current.uid !== uid) {
+        console.log(
+          "getUserProfile: skipping read because auth mismatch or not signed-in",
+          { requestedUid: uid, currentUid: current?.uid }
+        );
+        return null;
+      }
+    } catch (guardErr) {
+      // If auth isn't available for some reason, skip the read.
+      console.warn("getUserProfile auth guard failed:", guardErr);
+      return null;
+    }
+
     const userRef = doc(db, "users", uid);
     const snap = await safeGetDoc(userRef, "get user profile");
     return snap && snap.exists() ? snap.data() : null;
@@ -547,6 +578,51 @@ export async function saveUserProgress(
   } catch (error) {
     console.error("Error saving user progress:", error);
     throw error;
+  }
+}
+
+// Lightweight update helper for the user's progress document.
+// Use this to persist small UI preferences such as `lastViewedUnit`.
+export async function updateProgressFields(uid, fields = {}) {
+  if (!uid) throw new Error("uid required");
+
+  try {
+    // Guard: ensure the current auth user matches the target uid. This
+    // prevents the client from attempting a write that Firestore would
+    // reject with a permission error.
+    try {
+      const current = auth && auth.currentUser;
+      if (!current || current.uid !== uid) {
+        console.warn(
+          "updateProgressFields: auth mismatch or not signed-in, refusing to write",
+          { requestedUid: uid, currentUid: current?.uid }
+        );
+        throw new Error("auth-mismatch");
+      }
+    } catch (guardErr) {
+      console.warn("updateProgressFields auth guard failed:", guardErr);
+      throw guardErr;
+    }
+
+    const progressRef = doc(db, "users", uid, "progress", "main");
+    // shallow merge with lastUpdated
+    const ok = await safeSetDoc(
+      progressRef,
+      { ...fields, lastUpdated: Date.now() },
+      "update progress fields"
+    );
+
+    if (!ok) {
+      // safeSetDoc returns false on permission-denied; surface a clearer error
+      const e = new Error("permission-denied");
+      e.code = "permission-denied";
+      throw e;
+    }
+
+    return true;
+  } catch (err) {
+    console.error("Error updating progress fields:", err);
+    throw err;
   }
 }
 

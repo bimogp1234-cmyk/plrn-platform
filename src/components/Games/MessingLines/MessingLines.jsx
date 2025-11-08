@@ -5,8 +5,9 @@ import { AppBar, Toolbar, IconButton, Button } from "@mui/material";
 import { Brightness4, VolumeUp, VolumeOff } from "@mui/icons-material";
 import { useLocation, useNavigate } from "react-router-dom";
 
-// Firestore service
-import { saveGameScore } from "../../Departments/ComputerDep/progressService";
+// Firestore service via centralized user data context
+import { useUserData } from "../../../contexts/UserDataContext";
+import { useTheme as useAppTheme } from "../../../contexts/ThemeContext";
 
 // الأصوات
 const correctSound = new Audio("/sound/correct.mp3");
@@ -333,8 +334,14 @@ function MCQLine({ question, onAnswer, darkMode, resetTrigger }) {
 export default function MissingLinesGame() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { userData, darkMode, unitId, gameId, savedProgress } =
-    location.state || {};
+  const locState = location.state || {};
+  const { unitId, gameId, savedProgress } = locState;
+  const { theme } = useAppTheme();
+  const darkMode =
+    typeof locState.darkMode === "boolean"
+      ? locState.darkMode
+      : theme === "dark";
+  const { user: ctxUser, saveGameScore: ctxSaveGameScore } = useUserData();
 
   const [index, setIndex] = useState(savedProgress?.currentLevel || 0);
   const [score, setScore] = useState(savedProgress?.score || 0);
@@ -376,15 +383,29 @@ export default function MissingLinesGame() {
       console.warn("localStorage save failed", err);
     }
 
-    // 2. Save to Firebase via centralized service
-    if (userData?.uid && gameId) {
+    // 2. Save to Firebase via centralized context helper (prefers signed-in user)
+    const uid = ctxUser?.uid || (location.state?.userData || {}).uid;
+    if (gameId && uid) {
       try {
-        await saveGameScore(userData.uid, gameId, {
-          unitId,
-          rawScore,
-          rawMax,
-          completed: Boolean(isCompleted),
-        });
+        if (typeof ctxSaveGameScore === "function") {
+          await ctxSaveGameScore(gameId, {
+            unitId,
+            rawScore,
+            rawMax,
+            completed: Boolean(isCompleted),
+          });
+        } else {
+          // fallback to direct service call
+          const svc = await import(
+            "../../Departments/ComputerDep/progressService"
+          );
+          await svc.saveGameScore(uid, gameId, {
+            unitId,
+            rawScore,
+            rawMax,
+            completed: Boolean(isCompleted),
+          });
+        }
         console.log("✅ Firebase score saved (service)");
       } catch (err) {
         console.error("❌ Firebase save error (service):", err);

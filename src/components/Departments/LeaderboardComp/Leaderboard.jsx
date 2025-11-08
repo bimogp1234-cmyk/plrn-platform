@@ -29,8 +29,14 @@ import {
   getLeaderboardEntry,
   getUserProfile,
 } from "../ComputerDep/progressService";
+import { useUserData } from "../../../contexts/UserDataContext";
+import { useTheme as useAppTheme } from "../../../contexts/ThemeContext";
 
-const Leaderboard = ({ darkMode, userId, userScore, isMobile }) => {
+const Leaderboard = (props) => {
+  const { darkMode: propDarkMode, userId, userScore, isMobile } = props;
+  const { theme: appTheme } = useAppTheme();
+  const darkMode =
+    typeof propDarkMode === "boolean" ? propDarkMode : appTheme === "dark";
   const [leaderboardData, setLeaderboardData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -47,6 +53,12 @@ const Leaderboard = ({ darkMode, userId, userScore, isMobile }) => {
     false;
   const [showRaw, setShowRaw] = useState(debugFlag);
 
+  // Prefer global user data when available
+  const { user: authUser, overall: contextOverall } = useUserData();
+  const effectiveUserId = userId || authUser?.uid || null;
+  const effectiveUserScore =
+    userScore || contextOverall?.totalScore || contextOverall?.totalXP || 0;
+
   // Helper: extract plain data from different return shapes
   // - QueryDocumentSnapshot -> call .data()
   // - legacy { id, data } -> use .data
@@ -61,9 +73,9 @@ const Leaderboard = ({ darkMode, userId, userScore, isMobile }) => {
 
   // 🎯 Fetch current user's leaderboard data (direct lookup) with error handling
   const fetchCurrentUserData = async () => {
-    if (!userId) return null;
+    if (!effectiveUserId) return null;
     try {
-      const entry = await getLeaderboardEntry(userId);
+      const entry = await getLeaderboardEntry(effectiveUserId);
       return extractDocData(entry);
     } catch (error) {
       console.error("Error fetching current user data:", error);
@@ -100,7 +112,14 @@ const Leaderboard = ({ darkMode, userId, userScore, isMobile }) => {
         let photo = data?.avatarURL || data?.photoURL || null;
 
         try {
-          if (!name || name === "مستخدم" || name === "مستخدم جديد" || !photo) {
+          // Only attempt to read the user's private `users/{uid}` profile when
+          // the entry belongs to the currently signed-in / effective user.
+          // Firestore rules restrict reads on `users/{uid}` to the owner, so
+          // attempting to read other users will produce permission errors.
+          if (
+            data?.userId === effectiveUserId &&
+            (!name || name === "مستخدم" || name === "مستخدم جديد" || !photo)
+          ) {
             const profile = await getUserProfile(data.userId);
             if (profile) {
               if (
@@ -127,7 +146,7 @@ const Leaderboard = ({ darkMode, userId, userScore, isMobile }) => {
             data?.userId,
             err
           );
-          // Don't set permission error for profile enrichment failures - they're non-critical
+          // Skip permission errors for enrichment; they are non-critical.
         }
 
         // Some writers may omit userId in the document; fall back to the doc id
@@ -157,8 +176,9 @@ const Leaderboard = ({ darkMode, userId, userScore, isMobile }) => {
       // user entry, show the current user so they at least see their score.
       if (leaders.length === 0 && currentUser) {
         leaders.push({
-          id: currentUser.userId || currentUser.uid || userId || "me",
-          userId: currentUser.userId || currentUser.uid || userId || "me",
+          id: currentUser.userId || currentUser.uid || effectiveUserId || "me",
+          userId:
+            currentUser.userId || currentUser.uid || effectiveUserId || "me",
           name:
             currentUser.name ||
             currentUser.userName ||
@@ -168,7 +188,10 @@ const Leaderboard = ({ darkMode, userId, userScore, isMobile }) => {
           avatarURL: currentUser.avatarURL || null,
           photoURL: currentUser.avatarURL || currentUser.photoURL || "",
           totalXP:
-            currentUser.totalXP ?? currentUser.totalScore ?? userScore ?? 0,
+            currentUser.totalXP ??
+            currentUser.totalScore ??
+            effectiveUserScore ??
+            0,
           completedGames: currentUser.completedGames || 0,
           completedUnits: currentUser.completedUnits || 0,
           lastUpdated: currentUser.lastUpdated || null,
@@ -211,7 +234,12 @@ const Leaderboard = ({ darkMode, userId, userScore, isMobile }) => {
         let name = data?.name;
         let photo = data?.avatarURL || data?.photoURL || null;
         try {
-          if (!name || name === "مستخدم" || name === "مستخدم جديد" || !photo) {
+          // Only enrich from users/{uid} when this entry belongs to the
+          // effectiveUserId (to avoid cross-user reads blocked by rules).
+          if (
+            data?.userId === effectiveUserId &&
+            (!name || name === "مستخدم" || name === "مستخدم جديد" || !photo)
+          ) {
             const profile = await getUserProfile(data.userId);
             if (profile) {
               if (
@@ -275,7 +303,7 @@ const Leaderboard = ({ darkMode, userId, userScore, isMobile }) => {
 
   // 🎯 Real-time leaderboard updates with enhanced error handling
   useEffect(() => {
-    if (!userId) {
+    if (!effectiveUserId) {
       console.log("👤 No user ID, skipping real-time leaderboard setup");
       return;
     }
@@ -302,11 +330,12 @@ const Leaderboard = ({ darkMode, userId, userScore, isMobile }) => {
             let name = data?.name;
             let photo = data?.avatarURL || data?.photoURL || null;
             try {
+              // Only enrich from users/{uid} for the currently signed-in user
+              // to avoid permission-denied errors when attempting to read
+              // other users' private profile docs.
               if (
-                !name ||
-                name === "مستخدم" ||
-                name === "مستخدم جديد" ||
-                !photo
+                data?.userId === effectiveUserId &&
+                (!name || name === "مستخدم" || name === "مستخدم جديد" || !photo)
               ) {
                 const profile = await getUserProfile(data.userId);
                 if (profile) {
@@ -364,9 +393,15 @@ const Leaderboard = ({ darkMode, userId, userScore, isMobile }) => {
           if (leaders.length === 0 && currentUserData) {
             leaders.push({
               id:
-                currentUserData.userId || currentUserData.uid || userId || "me",
+                currentUserData.userId ||
+                currentUserData.uid ||
+                effectiveUserId ||
+                "me",
               userId:
-                currentUserData.userId || currentUserData.uid || userId || "me",
+                currentUserData.userId ||
+                currentUserData.uid ||
+                effectiveUserId ||
+                "me",
               name:
                 currentUserData.name ||
                 currentUserData.userName ||
@@ -377,7 +412,7 @@ const Leaderboard = ({ darkMode, userId, userScore, isMobile }) => {
               totalXP:
                 currentUserData.totalXP ??
                 currentUserData.totalScore ??
-                userScore ??
+                effectiveUserScore ??
                 0,
               completedGames: currentUserData.completedGames || 0,
               completedUnits: currentUserData.completedUnits || 0,
@@ -415,7 +450,7 @@ const Leaderboard = ({ darkMode, userId, userScore, isMobile }) => {
   // 🎯 Get user display data
   const getUserDisplayData = (player) => {
     // If this is the current user, use their actual data
-    if (player.userId === userId && currentUserData) {
+    if (player.userId === effectiveUserId && currentUserData) {
       return {
         name: currentUserData.name || "مستخدم",
         photoURL:
@@ -484,7 +519,7 @@ const Leaderboard = ({ darkMode, userId, userScore, isMobile }) => {
 
   // 🎯 Get rank background color
   const getRankBackground = (playerUserId) => {
-    if (playerUserId === userId) {
+    if (playerUserId === effectiveUserId) {
       return darkMode ? "rgba(34, 197, 94, 0.2)" : "rgba(34, 197, 94, 0.1)";
     }
     return "transparent";
@@ -642,7 +677,7 @@ const Leaderboard = ({ darkMode, userId, userScore, isMobile }) => {
                         "&:last-child td, &:last-child th": { border: 0 },
                       }}
                       className={`transition-all duration-200 ${
-                        player.userId === userId
+                        player.userId === effectiveUserId
                           ? "ring-2 ring-green-500 ring-opacity-50"
                           : ""
                       }`}
@@ -717,7 +752,9 @@ const Leaderboard = ({ darkMode, userId, userScore, isMobile }) => {
 
           {/* Current user rank info if not in top 10 */}
           {leaderboardData.length > 0 &&
-            !leaderboardData.some((player) => player.userId === userId) && (
+            !leaderboardData.some(
+              (player) => player.userId === effectiveUserId
+            ) && (
               <Box
                 className={`mt-4 p-3 rounded-lg border ${
                   darkMode
@@ -732,7 +769,7 @@ const Leaderboard = ({ darkMode, userId, userScore, isMobile }) => {
                   }`}
                 >
                   نقاطك الحالية:{" "}
-                  <strong>{userScore?.toLocaleString() || 0}</strong>
+                  <strong>{effectiveUserScore?.toLocaleString() || 0}</strong>
                 </Typography>
                 <Typography
                   variant="body2"
@@ -750,7 +787,8 @@ const Leaderboard = ({ darkMode, userId, userScore, isMobile }) => {
       {/* Debug info */}
       <Box className="mt-3 text-center">
         <Typography variant="caption" className="text-gray-500">
-          إجمالي اللاعبين: {leaderboardData.length} | نقاطك: {userScore}
+          إجمالي اللاعبين: {leaderboardData.length} | نقاطك:{" "}
+          {effectiveUserScore}
         </Typography>
         <div className="mt-2">
           <Button

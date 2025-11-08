@@ -1,10 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import Lottie from "lottie-react";
 import { useLocation } from "react-router-dom";
-import {
-  saveGameScore,
-  getUserScores,
-} from "../../Departments/ComputerDep/progressService";
+import { useUserData } from "../../../contexts/UserDataContext";
 
 // Lottie animations
 import startAnim from "./lottie/start.json";
@@ -90,7 +87,12 @@ export default function FlowchartGame({ db, userId = "guest" }) {
   const routeUserData = routeState.userData || null;
   const routeUnitId = routeState.unitId || null;
   const routeGameId = routeState.gameId || null;
-  const effectiveUserId = routeUserData?.uid || userId;
+  const {
+    user: ctxUser,
+    scores: ctxScores,
+    saveGameScore: ctxSaveGameScore,
+  } = useUserData();
+  const effectiveUserId = ctxUser?.uid || routeUserData?.uid || userId;
   const effectiveUnitId = routeUnitId;
   const effectiveGameId = routeGameId;
   const [level, setLevel] = useState(0);
@@ -204,35 +206,28 @@ export default function FlowchartGame({ db, userId = "guest" }) {
 
   // load saved score from centralized service (per-game scores)
   useEffect(() => {
-    if (!effectiveUserId || !effectiveGameId) return;
+    if (!effectiveGameId) return;
 
-    const loadScores = async () => {
-      try {
-        const scores = await getUserScores(effectiveUserId);
-        const myScore = scores?.[effectiveGameId];
-        if (myScore) {
-          // Prefer rawScore if available, otherwise try to reconstruct from normalized
-          if (typeof myScore.rawScore === "number") {
-            setScore(myScore.rawScore || 0);
-          } else if (typeof myScore.score === "number") {
-            const inferredRawMax = myScore.rawMax || QUESTIONS.length;
-            const inferredRaw = Math.round(
-              (myScore.score / 100) * inferredRawMax
-            );
-            setScore(inferredRaw || 0);
-          } else {
-            setScore(0);
-          }
-          // try to infer level from stored unitId or other metadata if present
-          setLevel(myScore.currentLevel || 0);
+    try {
+      const myScore = ctxScores?.[effectiveGameId];
+      if (myScore) {
+        if (typeof myScore.rawScore === "number") {
+          setScore(myScore.rawScore || 0);
+        } else if (typeof myScore.score === "number") {
+          const inferredRawMax = myScore.rawMax || QUESTIONS.length;
+          const inferredRaw = Math.round(
+            (myScore.score / 100) * inferredRawMax
+          );
+          setScore(inferredRaw || 0);
+        } else {
+          setScore(0);
         }
-      } catch (err) {
-        console.error("Error loading saved scores:", err);
+        setLevel(myScore.currentLevel || 0);
       }
-    };
-
-    loadScores();
-  }, [effectiveUserId, effectiveGameId]);
+    } catch (err) {
+      console.error("Error reading score from context:", err);
+    }
+  }, [ctxScores, effectiveGameId]);
 
   // save progress when important values change
   useEffect(() => {
@@ -244,14 +239,31 @@ export default function FlowchartGame({ db, userId = "guest" }) {
         // Send rawScore/rawMax so central service can normalize to 0-100
         const rawScore = typeof score === "number" ? score : 0;
         const rawMax = QUESTIONS.length;
-        await saveGameScore(effectiveUserId, effectiveGameId, {
-          unitId: effectiveUnitId,
-          rawScore,
-          rawMax,
-          // keep points/score fields backward-compatible (service will compute normalized)
-          points: null,
-          completed: gameOver,
-        });
+        if (typeof ctxSaveGameScore === "function") {
+          await ctxSaveGameScore(effectiveGameId, {
+            unitId: effectiveUnitId,
+            rawScore,
+            rawMax,
+            points: null,
+            completed: gameOver,
+          });
+        } else {
+          // fallback: try direct service call (best-effort)
+          try {
+            const shared = await import(
+              "../../Departments/ComputerDep/progressService"
+            );
+            await shared.saveGameScore(effectiveUserId, effectiveGameId, {
+              unitId: effectiveUnitId,
+              rawScore,
+              rawMax,
+              points: null,
+              completed: gameOver,
+            });
+          } catch (err) {
+            console.error("Fallback saveGameScore failed:", err);
+          }
+        }
       } catch (err) {
         console.error("Error saving flowchart score (service):", err);
       }

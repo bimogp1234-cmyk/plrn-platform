@@ -38,10 +38,12 @@ service cloud.firestore {
 
     // Users collection (each user's profile and subcollections)
     match /users/{userId} {
-      // Reading user root doc: only the owner may read by default (more private).
-      // If you want public profiles (name/photo), change this to `if true` and
-      // keep sensitive fields in a `private` subcollection.
-      allow read: if isOwner(userId);
+      // Reading user root doc: allow public read so leaderboard and other
+      // public UI can show non-sensitive profile fields (name/photo).
+      // NOTE: this makes the top-level user doc readable by anyone. Keep
+      // any sensitive fields (email, private settings, etc.) under a
+      // `private` subcollection or remove them from the top-level doc.
+      allow read: if true;
 
       // Writing to the top-level users/{userId} document must be performed by the owner only.
       allow create, update: if isOwner(userId)
@@ -78,8 +80,22 @@ service cloud.firestore {
       // Subcollection: progress -> users/{userId}/progress/{docId}
       match /progress/{docId} {
         allow read: if isOwner(userId);
+
+        // Allow the owner to create/update/delete the progress document.
+        // Validate a few lightweight UI-preference fields explicitly so small
+        // client-side writes (e.g. theme, lastViewedUnit) are allowed while
+        // still enforcing ownership. Keep validation shallow for large
+        // `progressData` arrays to avoid false negatives.
         allow create, update, delete: if isOwner(userId)
-          && (request.resource.data.totalProgress == null || (request.resource.data.totalProgress is number && request.resource.data.totalProgress >= 0 && request.resource.data.totalProgress <= 100));
+          // totalProgress must be a number 0..100 when present
+          && (request.resource.data.totalProgress == null || (request.resource.data.totalProgress is number && request.resource.data.totalProgress >= 0 && request.resource.data.totalProgress <= 100))
+          // theme may be 'dark' or 'light' when present
+          && (request.resource.data.theme == null || (request.resource.data.theme is string && (request.resource.data.theme == 'dark' || request.resource.data.theme == 'light')))
+          // lastViewedUnit should be numeric when present
+          && (request.resource.data.lastViewedUnit == null || request.resource.data.lastViewedUnit is number)
+          // lastUpdated should be a timestamp/number when present
+          && (request.resource.data.lastUpdated == null || request.resource.data.lastUpdated is number);
+
         // progressData is an array of complex objects; keep validation shallow to avoid blocking legitimate writes
       }
 
